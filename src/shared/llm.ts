@@ -83,6 +83,15 @@ function normalizeBaseUrl(url: string): string {
  *  small models don't truncate or mangle it. */
 const BATCH_SIZE = 3;
 
+/** Free-tier-friendly pacing: batches run SEQUENTIALLY with this gap between
+ *  starts. Groq's gpt-oss-20b free tier allows only ~8,000 TPM — three parallel
+ *  16k-token prompts trip it instantly. Sequential + spacing keeps each minute
+ *  to roughly one prompt. */
+export const BATCH_GAP_MS = 15_000;
+
+/** Backoff before the one retry on 429/5xx (tests stub this). */
+export const RETRY_BACKOFF_MS = { value: 30_000 };
+
 export interface SuggestResult {
   suggestions: Map<string, Suggestion>;
   /** Per-batch failure reasons, in order. Empty when every batch succeeded. */
@@ -99,20 +108,22 @@ export async function suggestWithLlm(
   if (!config.baseUrl || !config.model || fields.length === 0) return out;
 
   const known = new Set(fields.map((f) => f.id));
-  // Batches run in parallel: one malformed batch loses only its own fields.
-  const chunks: Promise<Map<string, Suggestion>>[] = [];
-  for (let i = 0; i < fields.length; i += BATCH_SIZE) {
-    chunks.push(requestBatch(fields.slice(i, i + BATCH_SIZE), profile, config, pageContext, known));
-  }
-  const settled = await Promise.allSettled(chunks);
-  settled.forEach((r, i) => {
-    if (r.status === 'fulfilled') {
-      for (const [k, v] of r.value) out.suggestions.set(k, v);
-    } else {
+  // Batches run sequentially with a gap: one malformed batch loses only its
+  // own fields, and free-tier token-per-minute limits are never tripped by
+  // concurrency (a 429 still triggers the patient retry inside requestBatch).
+  const chunks: FieldDescriptor[][] = [];
+  for (let i = 0; i < fields.length; i += BATCH_SIZE) chunks.push(fields.slice(i, i + BATCH_SIZE));
+  for (let i = 0; i < chunks.length; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, BATCH_GAP_MS));
+    try {
+      for (const [k, v] of await requestBatch(chunks[i], profile, config, pageContext, known)) {
+        out.suggestions.set(k, v);
+      }
+    } catch (e) {
       const first = i * BATCH_SIZE + 1;
-      out.errors.push(`questions ${first}–${Math.min(first + BATCH_SIZE - 1, fields.length)}: ${r.reason?.message ?? 'failed'}`);
+      out.errors.push(`questions ${first}–${Math.min(first + chunks[i].length - 1, fields.length)}: ${e instanceof Error ? e.message : 'failed'}`);
     }
-  });
+  }
   return out;
 }
 
@@ -163,13 +174,18 @@ async function requestBatch(
       body: JSON.stringify(body),
       // Bound worst-case hangs; queued endpoints can stall far longer than
       // a good run (~5–15s). Better a retryable failure than a frozen panel.
-      signal: AbortSignal.timeout(45_000),
+      signal: AbortSignal.timeout(90_000),
     });
     if (!res.ok) {
-      // 400: some servers reject response_format. 429/5xx: free-tier rate limits
-      // and cold queues — worth one patient retry instead of dropping the batch.
+      // 400: some servers reject response_format. 429: free-tier rate limits
+      // (Groq's is per-minute tokens) — wait out the server's own retry hint,
+      // then one patient retry. 5xx: cold queues, worth the same retry.
       if (attempt === 0 && (res.status === 400 || res.status === 429 || res.status >= 500)) {
-        if (res.status !== 400) await new Promise((r) => setTimeout(r, 2000));
+        if (res.status !== 400) {
+          const retryHint = Number(res.headers.get('retry-after'));
+          const wait = Number.isFinite(retryHint) && retryHint > 0 ? retryHint * 1000 : RETRY_BACKOFF_MS.value;
+          await new Promise((r) => setTimeout(r, Math.min(wait, 60_000)));
+        }
         continue;
       }
       throw new Error(`LLM request failed: HTTP ${res.status}`);

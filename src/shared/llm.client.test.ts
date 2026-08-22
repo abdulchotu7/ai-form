@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { suggestWithLlm } from './llm';
+import { suggestWithLlm, BATCH_GAP_MS, RETRY_BACKOFF_MS } from './llm';
 import type { FieldDescriptor, Profile } from './types';
 import { emptyProfile } from './schema';
 
@@ -75,11 +75,34 @@ describe('suggestWithLlm', () => {
   });
 
   it('degrades gracefully on HTTP errors after retry (returns empty, no throw)', async () => {
+    RETRY_BACKOFF_MS.value = 1; // don't actually sleep in tests
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 500 })));
     const { suggestions, errors } = await suggestWithLlm([field({ id: 'f1' })], profile, config);
     expect(suggestions.size).toBe(0);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatch(/HTTP 500/);
+  });
+
+  it('paces batches sequentially with a gap (free-tier TPM friendly)', async () => {
+    RETRY_BACKOFF_MS.value = 1;
+    const f = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: '{"suggestions":[]}' } }] })),
+    );
+    vi.stubGlobal('fetch', f);
+    const sleeps: number[] = [];
+    const origSetTimeout = globalThis.setTimeout;
+    vi.stubGlobal('setTimeout', ((fn: () => void, ms?: number) => {
+      sleeps.push(ms ?? 0);
+      return origSetTimeout(fn, 0);
+    }) as typeof setTimeout);
+    try {
+      await suggestWithLlm([field({ id: 'f1' }), field({ id: 'f2', name: 'b' }), field({ id: 'f3', name: 'c' }), field({ id: 'f4', name: 'd' })], profile, config);
+    } finally {
+      vi.unstubAllGlobals();
+      RETRY_BACKOFF_MS.value = 30_000;
+    }
+    expect(f).toHaveBeenCalledTimes(2); // 4 fields / batch size 3
+    expect(sleeps.filter((ms) => ms === BATCH_GAP_MS)).toHaveLength(1); // one gap before batch 2
   });
 
   it('returns empty without any network call when unconfigured', async () => {
