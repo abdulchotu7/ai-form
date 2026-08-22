@@ -6,6 +6,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:live": "vitest run --config vitest.live.config.ts",
     "test:watch": "vitest",
     "build": "npm run typecheck && vite build && vite build -c vite.content.config.ts && vite build -c vite.background.config.ts",
     "watch": "vite build --watch & vite build --watch -c vite.content.config.ts & vite build --watch -c vite.background.config.ts & wait",

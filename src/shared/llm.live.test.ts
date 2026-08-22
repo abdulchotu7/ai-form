@@ -22,7 +22,7 @@ describe.skipIf(!key)('live NVIDIA endpoint (context building)', () => {
   const config = {
     baseUrl: 'https://integrate.api.nvidia.com/v1',
     apiKey: key!,
-    model: 'meta/llama-3.1-8b-instruct', // fast non-reasoning default
+    model: 'openai/gpt-oss-20b', // shipped default in SettingsSchema
   };
 
   const profile: Profile = emptyProfile();

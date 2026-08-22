@@ -24,7 +24,7 @@ describe.skipIf(!key || !resume)('live context building from real documents', ()
   const config = {
     baseUrl: 'https://integrate.api.nvidia.com/v1',
     apiKey: key!,
-    model: 'meta/llama-3.1-8b-instruct',
+    model: 'openai/gpt-oss-20b', // shipped default in SettingsSchema
   };
 
   const profile: Profile = emptyProfile();

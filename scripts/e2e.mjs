@@ -7,7 +7,7 @@
 import { chromium } from 'playwright-core';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { extname, join } from 'node:path';
 
 const DIST = new URL('../dist', import.meta.url).pathname;
@@ -34,12 +34,33 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(PORT, r));
 
 /* ---- launch Chromium with the extension (persistent context is required for extensions) ---- */
-// Branded headless Chrome ignores --load-extension; Brave (Chromium) honors it.
-const CANDIDATES = [
-  '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-  '/Applications/Chromium.app/Contents/MacOS/Chromium',
-];
-const executablePath = CANDIDATES.find((p) => existsSync(p));
+// Branded headless Chrome ignores --load-extension; headed Chromium-family honors it.
+// NOTE: Chrome 137+ STABLE ignores --load-extension entirely (anti-malware policy) —
+// the sanctioned "real Chrome" for automation is Chrome for Testing (same engine).
+// AF_BROWSER=chrome → Chrome for Testing; default: Brave, then Chromium.
+function findChrome() {
+  const direct = process.env.AF_BROWSER === 'chrome'
+    ? ['/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing']
+    : [
+        '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+        '/Applications/Chromium.app/Contents/MacOS/Chromium',
+      ];
+  for (const p of direct) if (existsSync(p)) return p;
+  // Fallback: Playwright cache — newest chromium-* dir with Chrome for Testing
+  // inside (same engine as stable Chrome; honors --load-extension).
+  const cacheRoot = `${process.env.HOME}/Library/Caches/ms-playwright`;
+  try {
+    const dirs = readdirSync(cacheRoot)
+      .filter((d) => /^chromium-\d+$/.test(d))
+      .sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]));
+    for (const d of dirs) {
+      const bin = `${cacheRoot}/${d}/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`;
+      if (existsSync(bin)) return bin;
+    }
+  } catch { /* no cache */ }
+  return undefined;
+}
+const executablePath = findChrome();
 if (!executablePath) {
   console.error('No Chromium-based browser found for e2e.');
   process.exit(1);
@@ -299,7 +320,7 @@ const childVal = await page.frames().find((f) => f.url().includes('form-embed'))
 check('top-frame field routed correctly', topVal === 'TopFrame', String(topVal));
 check('iframe field routed correctly (no cross-wire)', childVal === 'ChildFrame', String(childVal));
 
-/* ---- form E: resume file attach + sensitive-file refusal ---- */
+/* ---- form E: file inputs are never touched (user attaches manually) ---- */
 await page.goto(`http://localhost:${PORT}/test/form-upload.html`, { waitUntil: 'load' });
 const up = await detect(`http://localhost:${PORT}/test/form-upload.html`).then((r) => r.res);
 const cvField = up.fields.find((f) => f.type === 'file' && /resume/i.test(f.label));
@@ -307,28 +328,82 @@ const ppField = up.fields.find((f) => f.type === 'file' && /passport/i.test(f.la
 check('both file inputs detected', Boolean(cvField && ppField), `${up.fields.length} fields total`);
 await swEval(async ({ url, cvId, ppId }) => {
   const [tab] = await chrome.tabs.query({ url });
-  const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x74, 0x65, 0x73, 0x74]); // "%PDF-test"
-  let bin = '';
-  bytes.forEach((b) => (bin += String.fromCharCode(b)));
-  const resumeFile = { name: 'test-resume.pdf', type: 'application/pdf', data: btoa(bin) };
-  await chrome.tabs.sendMessage(tab.id, { type: 'AF_FILL', values: [
+  const r = await chrome.tabs.sendMessage(tab.id, { type: 'AF_FILL', values: [
     { fieldId: cvId, value: 'test-resume.pdf' }, { fieldId: ppId, value: 'test-resume.pdf' },
-  ], resumeFile });
-}, { url: `http://localhost:${PORT}/test/form-upload.html`, cvId: cvField?.id, ppId: ppField?.id });
+  ] });
+  return r.results;
+}, { url: `http://localhost:${PORT}/test/form-upload.html`, cvId: cvField?.id, ppId: ppField?.id })
+  .then((results) => check('file fields refused at fill time',
+    results.every((x) => x.status === 'skipped-sensitive'), JSON.stringify(results)));
 const uploadState = await swEval(async (tabId) => {
   const [res] = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => ({
-      cv: document.getElementById('cv')?.files?.[0]?.name ?? null,
-      cvSize: document.getElementById('cv')?.files?.[0]?.size ?? 0,
+      cv: document.getElementById('cv')?.files?.length ?? 0,
       pp: document.getElementById('pp')?.files?.length ?? 0,
     }),
   });
   return res.result;
 }, await swEval(async (url) => (await chrome.tabs.query({ url }))[0].id, `http://localhost:${PORT}/test/form-upload.html`));
-check('resume attached to upload field', uploadState.cv === 'test-resume.pdf');
-check('attached file has real bytes', uploadState.cvSize === 9, String(uploadState.cvSize));
-check('passport upload never touched', uploadState.pp === 0);
+check('resume upload field untouched', uploadState.cv === 0);
+check('passport upload field untouched', uploadState.pp === 0);
+
+/* ---- form F (THE BUG): framework that only accepts TRUSTED input ----
+ * Synthetic events fill the DOM but the page's internal state stays empty —
+ * the exact "required field" error the user hit. After our CDP retype, the
+ * framework state must match the DOM. Also verifies verifyOnly is read-only. */
+await page.goto(`http://localhost:${PORT}/test/form-react.html`, { waitUntil: 'load' });
+const rf = await detect(`http://localhost:${PORT}/test/form-react.html`).then((r) => r.res);
+const rFirst = rf.fields.find((f) => f.label === 'First Name');
+const rEmail = rf.fields.find((f) => /email/i.test(f.label));
+const rNotes = rf.fields.find((f) => f.type === 'textarea');
+check('trusted-only form detected', Boolean(rFirst && rEmail && rNotes), `${rf.fields.length} fields`);
+
+// Sanity: synthetic-only write leaves the framework state EMPTY (reproduces the bug).
+await swEval(async ({ tabId, fid }) => {
+  await chrome.tabs.sendMessage(tabId, { type: 'AF_FILL', values: [{ fieldId: fid, value: 'SyntheticOnly' }] });
+}, { tabId: (await swEval(async (u) => (await chrome.tabs.query({ url: u }))[0].id, `http://localhost:${PORT}/test/form-react.html`)).valueOf(), fid: rFirst.id });
+const bugRepro = await page.evaluate(() => ({
+  dom: document.getElementById('r-first').value,
+  fw: window.__getFrameworkState().firstName,
+}));
+check('BUG REPRODUCED: DOM filled but framework state empty (synthetic events ignored)',
+  bugRepro.dom === 'SyntheticOnly' && bugRepro.fw === '', `dom="${bugRepro.dom}" framework="${bugRepro.fw}"`);
+
+// Now replicate exactly what sidepanel/api.ts does: synthetic fill already
+// happened above; retype via chrome.debugger trusted input, then READ-ONLY verify.
+const reactTabId = await swEval(async (u) => (await chrome.tabs.query({ url: u }))[0].id, `http://localhost:${PORT}/test/form-react.html`);
+const reactValues = [
+  { fieldId: rFirst.id, value: 'Testy' },
+  { fieldId: rEmail.id, value: 'testy@example.com' },
+  { fieldId: rNotes.id, value: 'I love building tools.' },
+];
+await swEval(async ({ tabId, values }) => {
+  const debuggee = { tabId };
+  await chrome.debugger.attach(debuggee, '1.3');
+  try {
+    for (const { fieldId, value } of values) {
+      await chrome.tabs.sendMessage(tabId, { type: 'AF_FOCUS', fieldId, clear: true });
+      await chrome.debugger.sendCommand(debuggee, 'Input.insertText', { text: value });
+    }
+  } finally {
+    await chrome.debugger.detach(debuggee).catch(() => {});
+  }
+}, { tabId: reactTabId, values: reactValues });
+
+// The decisive check: the PAGE's own state (not just the DOM) now holds the values.
+const synced = await page.evaluate(() => window.__allSynced());
+const fwState = await page.evaluate(() => window.__getFrameworkState());
+check('FRAMEWORK STATE SYNCED via trusted keystrokes (the fix works)', synced,
+  JSON.stringify(fwState));
+
+// Read-only verification confirms values without disturbing them.
+const verifyRes = await swEval(async ({ tabId, values }) => {
+  return chrome.tabs.sendMessage(tabId, { type: 'AF_FILL', values, verifyOnly: true });
+}, { tabId: reactTabId, values: reactValues });
+check('verifyOnly confirms values without writing',
+  verifyRes.results.every((r) => r.status === 'filled'), JSON.stringify(verifyRes.results));
+
 
 
 await context.close();

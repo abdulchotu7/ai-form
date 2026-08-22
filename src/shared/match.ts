@@ -74,7 +74,13 @@ export function deriveYearsOfExperience(profile: Profile): number | null {
 
 export function deriveHighestEducation(profile: Profile): string | null {
   if (profile.education.length === 0) return null;
-  const sorted = [...profile.education].sort((a, b) => (parseInt(b.endYear, 10) || 0) - (parseInt(a.endYear, 10) || 0));
+  // In-progress entries (no end year) sort as current — they outrank
+  // anything completed, so an ongoing Masters beats an old Bachelors.
+  const yearOf = (e: Profile['education'][number]) => {
+    const y = parseInt(e.endYear, 10);
+    return Number.isNaN(y) ? new Date().getFullYear() : y;
+  };
+  const sorted = [...profile.education].sort((a, b) => yearOf(b) - yearOf(a));
   const top = sorted[0];
   const parts = [top.degree, top.field].filter(Boolean);
   return parts.length ? parts.join(' in ') : null;

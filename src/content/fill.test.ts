@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { scanForm } from './detect';
-import { applyFill, valuesMatch } from './fill';
+import { applyFill, verifyFill, valuesMatch } from './fill';
 
 function setup(html: string) {
   document.body.innerHTML = html;
@@ -110,28 +110,47 @@ describe('fill safety', () => {
   });
 });
 
-describe('file attachment', () => {
-  const resume = { name: 'resume.pdf', type: 'application/pdf', data: btoa('fake pdf bytes') };
-
-  it('attaches the saved resume to a resume upload field', () => {
+describe('file fields are never touched', () => {
+  it('skips any file input, even one asking for a resume', () => {
     const { fields, targets } = setup(`<label for="cv">Upload resume</label><input id="cv" type="file">`);
-    const r = applyFill(targets.get(fields[0].id)!, '', resume);
-    expect(r.status).toBe('filled');
-    const el = targets.get(fields[0].id)!.elements[0] as HTMLInputElement;
-    expect(el.files?.length).toBe(1);
-    expect(el.files?.[0].name).toBe('resume.pdf');
-    expect(el.files?.[0].size).toBe(atob(resume.data).length); // decoded byte count
-  });
-
-  it('refuses non-resume file fields even when a resume is passed', () => {
-    const { fields, targets } = setup(`<label for="pp">Upload passport scan</label><input id="pp" type="file">`);
-    expect(applyFill(targets.get(fields[0].id)!, '', resume).status).toBe('skipped-sensitive');
+    expect(applyFill(targets.get(fields[0].id)!, 'resume.pdf').status).toBe('skipped-sensitive');
     expect((targets.get(fields[0].id)!.elements[0] as HTMLInputElement).files?.length ?? 0).toBe(0);
   });
 
-  it('does nothing without an explicit file', () => {
-    const { fields, targets } = setup(`<label for="cv2">Resume</label><input id="cv2" type="file">`);
-    expect(applyFill(targets.get(fields[0].id)!, '').status).toBe('skipped-sensitive');
+  it('verifyFill reports file fields as skipped too', () => {
+    const { fields, targets } = setup(`<label for="pp">Upload passport scan</label><input id="pp" type="file">`);
+    expect(verifyFill(targets.get(fields[0].id)!, 'x').status).toBe('skipped-sensitive');
+  });
+});
+
+describe('verifyFill (read-only verification)', () => {
+  it('confirms a text field that already holds the value', () => {
+    const { fields, targets } = setup(`<label for="n">First Name</label><input id="n">`);
+    applyFill(targets.get(fields[0].id)!, 'Abdul');
+    expect(verifyFill(targets.get(fields[0].id)!, 'Abdul').status).toBe('filled');
+  });
+
+  it('reports failure without writing when the value is missing', () => {
+    const { fields, targets } = setup(`<label for="n2">First Name</label><input id="n2">`);
+    const r = verifyFill(targets.get(fields[0].id)!, 'Abdul');
+    expect(r.status).toBe('failed');
+    expect((targets.get(fields[0].id)!.elements[0] as HTMLInputElement).value).toBe('');
+  });
+
+  it('verifies select and checkbox state', () => {
+    const { fields, targets } = setup(`
+      <label for="c">Country</label>
+      <select id="c"><option value="">--</option><option>India</option><option>USA</option></select>
+      <label for="t">I agree</label><input id="t" type="checkbox">
+    `);
+    applyFill(targets.get(fields[0].id)!, 'India');
+    expect(verifyFill(targets.get(fields[0].id)!, 'India').status).toBe('filled');
+    expect(verifyFill(targets.get(fields[0].id)!, 'USA').status).toBe('failed');
+
+    const agree = targets.get(fields[1].id)!;
+    applyFill(agree, 'yes');
+    expect(verifyFill(agree, 'yes').status).toBe('filled');
+    expect(verifyFill(agree, 'no').status).toBe('failed');
   });
 });
 

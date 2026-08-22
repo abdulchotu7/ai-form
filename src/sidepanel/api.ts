@@ -1,4 +1,4 @@
-import type { ContentRequest, DetectResponse, FillResult, Profile, StoredFile } from '../shared/types';
+import type { ContentRequest, DetectResponse, FillResult, Profile } from '../shared/types';
 import { emptyProfile, emptySettings, ProfileSchema, SettingsSchema } from '../shared/schema';
 
 /** chrome.* wrappers — the only place the side panel touches extension APIs. */
@@ -25,16 +25,6 @@ export async function loadSettings() {
 
 export async function saveSettings(settings: ReturnType<typeof emptySettings>): Promise<void> {
   await chrome.storage.local.set({ settings });
-}
-
-/** The user's resume file for auto-attach — stored separately from the profile (it's binary and big). */
-export async function loadResumeFile(): Promise<StoredFile | null> {
-  return (await storageGet<StoredFile>('resumeFile')) ?? null;
-}
-
-export async function saveResumeFile(file: StoredFile | null): Promise<void> {
-  if (file) await chrome.storage.local.set({ resumeFile: file });
-  else await chrome.storage.local.remove('resumeFile');
 }
 
 async function activeTab(): Promise<chrome.tabs.Tab> {
@@ -108,8 +98,7 @@ export async function detectFields(): Promise<DetectResponse> {
 }
 
 export async function fillFields(
-  values: { fieldId: string; value: string }[],
-  resumeFile?: StoredFile,
+  values: { fieldId: string; value: string; kind?: string }[],
 ): Promise<{ results: FillResult[] }> {
   const { tabId, frames } = await activeTabWithFrames();
   const byFrame = new Map<number, { fieldId: string; value: string }[]>();
@@ -128,7 +117,7 @@ export async function fillFields(
         return;
       }
       try {
-        const r = await sendToFrame<{ results: FillResult[] }>(tabId, frameId, { type: 'AF_FILL', values: vals, resumeFile });
+        const r = await sendToFrame<{ results: FillResult[] }>(tabId, frameId, { type: 'AF_FILL', values: vals });
         results.push(...r.results.map((res) => ({ ...res, fieldId: `${prefix(frameId)}${res.fieldId}` })));
       } catch {
         results.push(...vals.map((v) => ({ fieldId: v.fieldId, status: 'not-found' as const })));
@@ -136,13 +125,19 @@ export async function fillFields(
     }),
   );
 
-  // CDP refill: fields the page refused get retyped as REAL trusted keystrokes
-  // via chrome.debugger — the only thing frameworks that filter synthetic
-  // events (Phenom, some Google forms) will accept. Shows Chrome's debugging
-  // banner for a moment; only runs for fields that failed the normal path.
-  const failed = results.filter((r) => r.status === 'failed');
-  if (failed.length > 0) {
-    const refilled = await cdpRefill(tabId, failed, values).catch(() => [] as FillResult[]);
+  // Trusted-input retype for free-text fields (the default path now). Synthetic
+  // input events are isTrusted:false and some frameworks' validators never
+  // accept them — the DOM shows the right value but the page's own state still
+  // thinks the field is empty ("required" errors on submit even though content
+  // is visible). Real keystrokes via chrome.debugger fix that. Shows Chrome's
+  // debugging banner for a moment.
+  const FREE_TEXT = new Set(['input', 'textarea']);
+  const toRetype = results.filter((r) => {
+    if (r.status !== 'filled' && r.status !== 'failed') return false;
+    return FREE_TEXT.has(values.find((v) => v.fieldId === r.fieldId)?.kind ?? '');
+  });
+  if (toRetype.length > 0) {
+    const refilled = await cdpRefill(tabId, toRetype, values).catch(() => [] as FillResult[]);
     for (const r of refilled) {
       const i = results.findIndex((x) => x.fieldId === r.fieldId);
       if (i >= 0) results[i] = r;
@@ -151,16 +146,20 @@ export async function fillFields(
   return { results };
 }
 
-/** Re-type failed fields as trusted input, then re-verify through the normal path. */
+/**
+ * Re-type fields as trusted input via CDP, then verify READ-ONLY.
+ * The retype itself never re-writes with synthetic events — that would clobber
+ * the framework state the real keystrokes just fixed.
+ */
 async function cdpRefill(
   tabId: number,
-  failed: FillResult[],
-  values: { fieldId: string; value: string }[],
+  targets: FillResult[],
+  values: { fieldId: string; value: string; kind?: string }[],
 ): Promise<FillResult[]> {
   const debuggee = { tabId };
   await chrome.debugger.attach(debuggee, '1.3');
   try {
-    for (const r of failed) {
+    for (const r of targets) {
       const [frameId, local] = split(r.fieldId);
       const v = values.find((x) => x.fieldId === r.fieldId)?.value;
       if (!v) continue;
@@ -170,11 +169,10 @@ async function cdpRefill(
   } finally {
     await chrome.debugger.detach(debuggee).catch(() => {});
   }
-  // Re-run the normal fill on just the failed fields — it re-verifies and
-  // reports honest status now that the value arrived as trusted input.
+  // Verify read-only (AF_FILL + verifyOnly) — no DOM writes after trusted input.
   const redo = new Map<number, { fieldId: string; value: string }[]>();
   const out: FillResult[] = [];
-  for (const r of failed) {
+  for (const r of targets) {
     const [frameId, local] = split(r.fieldId);
     const v = values.find((x) => x.fieldId === r.fieldId)!.value;
     const list = redo.get(frameId) ?? [];
@@ -184,7 +182,7 @@ async function cdpRefill(
   await Promise.all(
     [...redo].map(async ([frameId, vals]) => {
       try {
-        const r = await sendToFrame<{ results: FillResult[] }>(tabId, frameId, { type: 'AF_FILL', values: vals });
+        const r = await sendToFrame<{ results: FillResult[] }>(tabId, frameId, { type: 'AF_FILL', values: vals, verifyOnly: true });
         out.push(...r.results.map((res) => ({ ...res, fieldId: `${prefix(frameId)}${res.fieldId}` })));
       } catch {
         out.push(...vals.map((v) => ({ fieldId: v.fieldId, status: 'failed' as const })));

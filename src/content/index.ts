@@ -1,6 +1,6 @@
 import type { ContentRequest, DetectResponse } from '../shared/types';
 import { scanForm } from './detect';
-import { applyFill } from './fill';
+import { applyFill, verifyFill } from './fill';
 
 // Load marker (isolated world — invisible to the page). Guards against double
 // registration if the script gets injected twice (programmatic fallback path).
@@ -75,11 +75,16 @@ if (document.documentElement.dataset.afFormAssistant !== '1') {
     if (req?.type === 'AF_FILL') {
       // Field ids are stable per element (see detect.ts), so a fresh scan
       // resolves the same ids even if the DOM shifted since analysis.
+      // verifyOnly=true never writes DOM values — it just reports whether each
+      // field already holds its value. Used after a CDP trusted-input retype:
+      // writing again with synthetic events could clobber framework state that
+      // only accepted real keystrokes.
       const targets = scanForm(document).targets;
       const results = req.values.map(({ fieldId, value }) => {
         const target = targets.get(fieldId);
         if (!target) return { fieldId, status: 'not-found' as const };
-        return applyFill(target, value, req.resumeFile);
+        if (req.verifyOnly) return verifyFill(target, value);
+        return applyFill(target, value);
       });
       sendResponse({ results });
       return false;

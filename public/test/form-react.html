@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>React-like Trusted-Only Form</title></head>
+<body>
+<!-- Simulates a framework whose validator only accepts TRUSTED input events
+     (isTrusted:false synthetic events are ignored). This reproduces the real-world
+     bug: the DOM shows the filled value but the app's internal state stays empty,
+     so submitting reports "required field" even though content is visible. -->
+<form id="app">
+  <p>
+    <label for="r-first">First Name</label>
+    <input id="r-first" name="firstName" required>
+  </p>
+  <p>
+    <label for="r-email">Email Address</label>
+    <input id="r-email" name="email" type="email" required>
+  </p>
+  <p>
+    <label for="r-notes">Why are you interested in this role?</label>
+    <textarea id="r-notes" name="notes"></textarea>
+  </p>
+</form>
+<script>
+  // Framework-like state, updated ONLY on trusted input events.
+  const state = { firstName: '', email: '', notes: '' };
+  for (const key of Object.keys(state)) {
+    const el = document.getElementById('r-' + (key === 'firstName' ? 'first' : key));
+    el.addEventListener('input', (e) => {
+      if (!e.isTrusted) return; // ← the whole point: synthetic events rejected
+      state[key] = e.target.value;
+    });
+  }
+  // What the app would validate on submit.
+  window.__getFrameworkState = () => ({ ...state });
+  window.__allSynced = () => {
+    const s = window.__getFrameworkState();
+    return s.firstName === document.getElementById('r-first').value
+      && s.email === document.getElementById('r-email').value
+      && s.notes === document.getElementById('r-notes').value;
+  };
+</script>
+</body>
+</html>

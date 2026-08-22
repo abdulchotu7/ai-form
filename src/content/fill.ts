@@ -1,4 +1,4 @@
-import type { FillResult, FillStatus, StoredFile } from '../shared/types';
+import type { FillResult, FillStatus } from '../shared/types';
 import type { FillTarget } from './detect';
 import { isSensitive } from '../shared/match';
 
@@ -57,7 +57,11 @@ function normalizeDate(value: string): string | null {
   if (m) return `${m[2]}-${String(monthNames.indexOf(m[1]) + 1).padStart(2, '0')}-01`;
   const yearOnly = v.match(/\b(19|20)\d{2}\b/);
   if (yearOnly && /^(19|20)\d{2}$/.test(v)) return `${v}-01-01`;
-  const d = new Date(v);
+  // Parse as UTC to avoid the local-timezone shift moving the date a day
+  // backwards via toISOString() (e.g. "03/01/2020" in IST → 2020-02-29 UTC).
+  const m2 = v.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (m2) return `${m2[3]}-${m2[1].padStart(2, '0')}-${m2[2].padStart(2, '0')}`;
+  const d = new Date(`${v.trim()} UTC`);
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
@@ -92,41 +96,14 @@ function fillCheckbox(box: HTMLInputElement, value: string): boolean {
   if (box.disabled) return false;
   const want = truthy(value);
   if (box.checked !== want) box.click();
-  else if (!box.checked && want) box.click();
   return true;
 }
 
-/**
- * Attach a stored file to <input type=file>. Only ever called with a file the
- * user explicitly saved and approved in the review UI — never for anything else.
- */
-function fillFile(el: HTMLInputElement, file: StoredFile): boolean {
-  if (el.disabled) return false;
-  try {
-    const bytes = Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0));
-    const dt = new DataTransfer();
-    dt.items.add(new File([bytes], file.name, { type: file.type }));
-    el.files = dt.files;
-  } catch {
-    return false;
-  }
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-  return el.files?.length === 1;
-}
-
-export function applyFill(target: FillTarget, rawValue: string, resumeFile?: StoredFile): FillResult {
+export function applyFill(target: FillTarget, rawValue: string): FillResult {
   const status = (s: FillStatus): FillResult => ({ fieldId: target.descriptor.id, status: s });
 
-  // File inputs are handled before the sensitive gate: they are only filled
-  // when the user's own saved resume is explicitly passed in — and only when
-  // the field actually asks for a resume/CV (never "upload passport").
-  if (target.kind === 'file') {
-    const d = target.descriptor;
-    const wantsResume = /resume|\bcv\b|curriculum/i.test(`${d.label} ${d.context} ${d.name}`);
-    if (!wantsResume || !resumeFile || !target.elements[0]) return status('skipped-sensitive');
-    return fillFile(target.elements[0] as HTMLInputElement, resumeFile) ? status('filled') : status('failed');
-  }
+  // File inputs are never touched — the user attaches files themselves.
+  if (target.kind === 'file') return status('skipped-sensitive');
   if (isSensitive(target.descriptor)) return status('skipped-sensitive');
   if (!target.elements[0]) return status('not-found');
   const value = rawValue;
@@ -194,5 +171,49 @@ export function applyFill(target: FillTarget, rawValue: string, resumeFile?: Sto
     }
     default:
       return status('failed');
+  }
+}
+
+/**
+ * Read-only check that a field already holds the intended value. Never touches
+ * the DOM — safe to run after trusted-input retyping, where a second synthetic
+ * write could clobber framework state that only accepted real keystrokes.
+ */
+export function verifyFill(target: FillTarget, rawValue: string): FillResult {
+  const status = (s: FillStatus): FillResult => ({ fieldId: target.descriptor.id, status: s });
+  if (!target.elements[0]) return status('not-found');
+  if (isSensitive(target.descriptor)) return status('skipped-sensitive');
+  const el = target.elements[0];
+  switch (target.kind) {
+    case 'checkbox': {
+      const box = el as HTMLInputElement;
+      if (truthy(rawValue) !== box.checked)
+        return { fieldId: target.descriptor.id, status: 'failed', detail: 'checkbox does not reflect the approved state' };
+      return status('filled');
+    }
+    case 'radio':
+    case 'checkbox-group': {
+      const wanted = target.kind === 'radio' ? [rawValue] : rawValue.split(',').map((s) => s.trim()).filter(Boolean);
+      const boxes = target.elements as HTMLInputElement[];
+      for (const w of wanted) {
+        const box =
+          boxes.find((b) => b.value.toLowerCase() === w.toLowerCase()) ??
+          boxes.find((b) => (b.labels?.[0]?.textContent ?? '').trim().toLowerCase() === w.toLowerCase());
+        if (!box) return { fieldId: target.descriptor.id, status: 'failed', detail: `no option matching "${w}"` };
+        if (!box.checked) return { fieldId: target.descriptor.id, status: 'failed', detail: `"${w}" is not checked` };
+      }
+      return status('filled');
+    }
+    case 'select': {
+      const sel = el as HTMLSelectElement;
+      const nv = rawValue.trim().toLowerCase();
+      const opt =
+        Array.from(sel.options).find((o) => o.value.toLowerCase() === nv || o.text.trim().toLowerCase() === nv) ??
+        Array.from(sel.options).find((o) => o.text.trim().toLowerCase().includes(nv) || nv.includes(o.text.trim().toLowerCase()));
+      return opt && !opt.disabled && sel.value === opt.value ? status('filled') : status('failed');
+    }
+    default:
+      // input / textarea — compare with the same mask tolerance as fill.
+      return valuesMatch(el.value, rawValue.trim()) ? status('filled') : status('failed');
   }
 }

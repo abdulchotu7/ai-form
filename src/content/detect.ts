@@ -114,6 +114,11 @@ function optionLabel(el: HTMLInputElement): string {
   return el.value || text(el.parentElement);
 }
 
+/** True when both controls live under the same form / shadow root. */
+function sameScope(el: HTMLInputElement, scope: ParentNode): boolean {
+  return (el.form ?? el.getRootNode()) === scope;
+}
+
 interface ScanResult {
   fields: FieldDescriptor[];
   targets: Map<string, FillTarget>;
@@ -164,9 +169,16 @@ export function scanForm(root: Document): ScanResult {
     if (consumed.has(el)) continue;
 
     /* ---- radio groups ---- */
+    // Radios sharing a name form one group. Nameless radios are grouped by
+    // their parent <form> (or document/shadow root) so a nameless pair still
+    // behaves as one mutually-exclusive group rather than two lone fields.
     if (el instanceof HTMLInputElement && el.type === 'radio') {
+      const scope: ParentNode = el.form ?? (el.getRootNode() as ParentNode);
       const group = controls.filter(
-        (c): c is HTMLInputElement => c instanceof HTMLInputElement && c.type === 'radio' && c.name !== '' && c.name === el.name,
+        (c): c is HTMLInputElement =>
+          c instanceof HTMLInputElement &&
+          c.type === 'radio' &&
+          (el.name !== '' ? c.name === el.name : c.name === '' && sameScope(c, scope)),
       );
       group.forEach((g) => consumed.add(g));
       const first = group[0];

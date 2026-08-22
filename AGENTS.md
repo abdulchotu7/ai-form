@@ -17,10 +17,21 @@ the actual extension through its service worker.
   Client fetch timeout is 90s (default model answers in ~2s).
 - **LLM builds context:** the system prompt lets the model synthesize/compose answers
   (professional summaries, narratives) strictly from profile facts — including the
-  full resume + portfolio text in `profile.documents` (capped at 8k chars each in the
-  prompt) — capped at confidence 0.85 for composed answers; anything not derivable
-  stays null (no fabrication). Live-verified against the real documents via
-  `npx vitest run context.live`.
+  full resume + portfolio text in `profile.documents` (capped at 8k chars each in the prompt)
+  — capped at confidence 0.85 for composed answers (enforced in code in `finalize()`, not
+  just the prompt); anything not derivable stays null (no fabrication). Live tests live in
+  `*.live.test.ts` and are EXCLUDED from `npm test`; run them with `npm run test:live`.
+  File uploads are NEVER filled — the user attaches files manually (resume auto-attach
+  was removed by user decision).
+- **Trusted-input filling (critical invariant):** synthetic input events are
+  `isTrusted:false` and some frameworks' validators never accept them — the DOM shows the
+  value but the page's own state still thinks the field is empty ("required" errors on
+  submit even though content is visible). So ALL free-text fields (input/textarea) are
+  retyped via chrome.debugger CDP `Input.insertText` (real trusted keystrokes) after the
+  initial synthetic write, then verified READ-ONLY (`AF_FILL` + `verifyOnly` → `verifyFill`
+  in fill.ts) — never re-written with synthetic events after trusted input, which would
+  clobber the framework state the keystrokes just fixed. Selects/radios/checkboxes don't
+  need this (click/change works there).
 - **Stack:** TypeScript strict, Vite 6 (3 configs: sidepanel React app, content IIFE,
   background IIFE), React 18, zod for all boundary validation, vitest + happy-dom,
   Playwright (`playwright-core`) for e2e.
@@ -50,15 +61,18 @@ the actual extension through its service worker.
 
 ```bash
 npm run build      # typecheck + build → dist/ (load unpacked from here)
-npm test           # unit tests (live NVIDIA test auto-skips without .env)
-npx vitest run llm.live   # live NVIDIA round-trip (~2 min, needs .env key)
-npm run e2e        # real-browser verification via Playwright (Brave; headed mode)
+npm test           # unit tests (live-API tests excluded; run separately)
+npm run test:live  # live NVIDIA round-trips (needs .env key)
+npm run e2e        # real-browser verification via Playwright (Chrome for Testing
+                   # auto-found in the Playwright cache, or Brave; headed mode)
 npm run serve:test # test forms at http://localhost:8899/test/form-a.html
 ```
 
 ### Gotchas learned
 
-- Branded headless Chrome ignores `--load-extension`; e2e uses Brave via Playwright's
+- Chrome 137+ stable ignores `--load-extension` and blocks CDP on the default profile
+  (port 9222 squatted, all endpoints 404). E2E uses Chrome for Testing (same engine,
+  honors extensions; auto-discovered in the Playwright cache) or Brave via Playwright's
   `launchPersistentContext` (extensions require headed mode there).
 - happy-dom's fetch enforces CORS — live-API tests must use `// @vitest-environment node`
   (the real extension bypasses CORS via host_permissions, so this is test-only).

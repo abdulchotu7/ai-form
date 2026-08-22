@@ -136,7 +136,12 @@ async function requestBatch(
           role: 'user',
           content: buildUserPrompt(
             fields,
-            fields.some((f) => f.type === 'textarea')
+            // Documents are big (8k chars each) — ship them only to batches
+            // that can actually use narrative context: free-text answers
+            // (single-line text inputs often ask "tell us about your
+            // experience" too) and selects/radios where an option must be
+            // composed from the documents.
+            fields.some((f) => f.type === 'textarea' || f.type === 'text')
               ? profile
               : { ...profile, documents: { resume: '', portfolio: '' } },
             pageContext,
@@ -202,10 +207,13 @@ function finalize(content: string, knownIds: Set<string>): Map<string, Suggestio
   for (const s of suggestions) {
     if (!knownIds.has(s.fieldId)) continue; // reject hallucinated field ids
     const value = s.value?.trim() ? s.value.trim() : null;
+    // Enforce the "composed answers ≤ 0.85" rule in code — small models
+    // routinely ignore it in the prompt. LLM output is fallback-only
+    // (deterministic matches win), so this never downgrades a direct match.
     out.set(s.fieldId, {
       fieldId: s.fieldId,
       value,
-      confidence: s.confidence ?? 0,
+      confidence: Math.min(s.confidence ?? 0, 0.85),
       source: 'llm',
       reason: s.reason ?? '',
     });

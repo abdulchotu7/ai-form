@@ -1,12 +1,10 @@
 import { useEffect, useState } from 'react';
-import type { Profile, StoredFile } from '../../shared/types';
+import type { Profile } from '../../shared/types';
 import { emptyProfile } from '../../shared/schema';
 
 interface Props {
   initial: Profile;
   onSave: (p: Profile) => void;
-  resumeFile: StoredFile | null;
-  onResumeFile: (f: StoredFile | null) => void;
 }
 
 function Field({
@@ -48,22 +46,9 @@ function LoadFileButton({ onText }: { onText: (t: string) => void }) {
   );
 }
 
-export function ProfileForm({ initial, onSave, resumeFile, onResumeFile }: Props) {
+export function ProfileForm({ initial, onSave }: Props) {
   const [p, setP] = useState<Profile>(initial);
   const [saved, setSaved] = useState(false);
-
-  const pickResume = (input: HTMLInputElement) => {
-    const f = input.files?.[0];
-    if (!f) return;
-    void f.arrayBuffer().then((buf) => {
-      let bin = '';
-      const bytes = new Uint8Array(buf);
-      for (let i = 0; i < bytes.length; i += 0x8000)
-        bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-      onResumeFile({ name: f.name, type: f.type || 'application/octet-stream', data: btoa(bin) });
-    });
-    input.value = '';
-  };
 
   useEffect(() => setP(initial), [initial]);
 
@@ -208,30 +193,6 @@ export function ProfileForm({ initial, onSave, resumeFile, onResumeFile }: Props
           </div>
         ))}
         <button className="btn-link" onClick={() => set((d) => void d.standardAnswers.push({ question: '', answer: '' }))}>+ Add standard answer</button>
-      </section>
-
-      <section className="card">
-        <h2>Resume file (auto-attach)</h2>
-        <p className="hint">
-          Your actual resume file (PDF/DOC). Forms with a "Upload resume" field will offer to attach
-          it — only after you review and confirm. Stored locally in your browser.
-        </p>
-        {resumeFile ? (
-          <div className="entry">
-            📄 {resumeFile.name}{' '}
-            <button className="btn-link danger" onClick={() => onResumeFile(null)}>Remove</button>
-          </div>
-        ) : (
-          <label className="btn-link">
-            Choose file…
-            <input
-              type="file"
-              accept=".pdf,.doc,.docx,.rtf"
-              style={{ display: 'none' }}
-              onChange={(e) => e.target.files && pickResume(e.target)}
-            />
-          </label>
-        )}
       </section>
 
       <section className="card">
