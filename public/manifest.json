@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "AI Form Assistant",
+  "version": "0.1.0",
+  "description": "Understand web forms and suggest answers from your personal context. You stay in control: review every suggestion before it fills.",
+  "permissions": ["storage", "sidePanel", "scripting"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "action": {
+    "default_title": "AI Form Assistant"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

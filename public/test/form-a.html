@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AI Form Assistant — Test Form A (comprehensive)</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; color: #222; }
+  fieldset { margin: 24px 0; border: 1px solid #ccc; border-radius: 8px; }
+  legend { font-weight: 600; padding: 0 6px; }
+  div.row { margin: 12px 0; }
+  label { display: block; font-size: 13px; margin-bottom: 4px; }
+  input[type=text], input[type=email], input[type=tel], input[type=number], input[type=date], textarea, select {
+    width: 100%; padding: 7px; border: 1px solid #bbb; border-radius: 6px; font: inherit;
+  }
+  .inline-label { display: inline-flex; align-items: center; gap: 6px; margin-right: 14px; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>Job Application — Test Form A</h1>
+<p>A deliberately diverse form. No <code>&lt;form&gt;</code> element wraps most of it.</p>
+
+<div class="row">
+  <label for="first_name">First Name</label>
+  <input type="text" id="first_name" name="fname" required>
+</div>
+<div class="row">
+  <label for="last_name">Last Name</label>
+  <input type="text" id="last_name" name="lname" required>
+</div>
+<div class="row">
+  <label for="email">Email Address</label>
+  <input type="email" id="email" name="email" required>
+</div>
+<div class="row">
+  <label for="phone">Mobile Number</label>
+  <input type="tel" id="phone" name="mobile">
+</div>
+<div class="row">
+  <label for="linkedin">LinkedIn URL</label>
+  <input type="text" id="linkedin" name="linkedin_url">
+</div>
+<div class="row">
+  <label for="github">GitHub Profile</label>
+  <input type="text" id="github" name="github_user">
+</div>
+
+<fieldset>
+  <legend>Education</legend>
+  <div class="row">
+    <label for="edu">What is your highest level of education?</label>
+    <select id="edu" name="education_level">
+      <option value="">--Select--</option>
+      <option>High school</option>
+      <option>B.Tech</option>
+      <option>B.Sc</option>
+      <option>M.Sc</option>
+      <option>PhD</option>
+    </select>
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend>Experience</legend>
+  <div class="row">
+    <label for="yoe">How many years of professional experience do you have?</label>
+    <input type="number" id="yoe" name="years_experience" min="0">
+  </div>
+  <div class="row">
+    <label for="skills">Skills (comma separated)</label>
+    <textarea id="skills" name="skills_list" rows="2"></textarea>
+  </div>
+  <div class="row">
+    <span style="font-size:13px;font-weight:600">Preferred work mode</span><br>
+    <label class="inline-label"><input type="radio" name="workmode" value="remote"> Remote</label>
+    <label class="inline-label"><input type="radio" name="workmode" value="hybrid"> Hybrid</label>
+    <label class="inline-label"><input type="radio" name="workmode" value="onsite"> On-site</label>
+  </div>
+  <div class="row">
+    <span style="font-size:13px;font-weight:600">Are you willing to relocate?</span><br>
+    <label class="inline-label"><input type="radio" name="relocate" value="yes"> Yes</label>
+    <label class="inline-label"><input type="radio" name="relocate" value="no"> No</label>
+  </div>
+</fieldset>
+
+<div class="row">
+  <label for="why">Why are you interested in this role?</label>
+  <textarea id="why" name="motivation" rows="3"></textarea>
+</div>
+<div class="row">
+  <label for="salary">Expected Salary</label>
+  <input type="text" id="salary" name="expected_salary">
+</div>
+
+<fieldset>
+  <legend>Technologies you have used professionally</legend>
+  <label class="inline-label"><input type="checkbox" name="tech" value="python"> Python</label>
+  <label class="inline-label"><input type="checkbox" name="tech" value="typescript"> TypeScript</label>
+  <label class="inline-label"><input type="checkbox" name="tech" value="kubernetes"> Kubernetes</label>
+</fieldset>
+
+<!-- no label at all: placeholder only -->
+<div class="row">
+  <input type="text" placeholder="Your portfolio website" name="portfolio">
+</div>
+
+<!-- sensitive fields: must never be filled -->
+<div class="row">
+  <label for="pass">Create a Password</label>
+  <input type="password" id="pass" name="password">
+</div>
+<div class="row">
+  <label for="pan">PAN Number</label>
+  <input type="text" id="pan" name="government_id">
+</div>
+
+<p>
+  <button type="button" onclick="alert('This is the site submit button. The extension must NEVER click it.')">
+    Submit Application
+  </button>
+</p>
+
+<script>
+  // Dynamically inserted field appears 2s after load — test Re-analyze.
+  setTimeout(() => {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    wrap.innerHTML = '<label for="notice_period">Notice Period (days)</label>' +
+      '<input type="number" id="notice_period" name="notice_days">';
+    document.querySelector('p').before(wrap);
+  }, 2000);
+</script>
+</body>
+</html>

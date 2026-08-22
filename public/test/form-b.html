@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AI Form Assistant — Test Form B (ARIA / table / SPA-style)</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 560px; margin: 40px auto; padding: 0 16px; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 6px 10px; }
+  th { text-align: left; padding: 6px 10px; font-size: 13px; width: 180px; }
+  tr { border-bottom: 1px solid #eee; }
+  input, textarea { padding: 6px; border: 1px solid #bbb; border-radius: 6px; width: 100%; font: inherit; box-sizing: border-box; }
+  h2 { font-size: 15px; margin-top: 28px; }
+</style>
+</head>
+<body>
+<h1>Survey — Test Form B</h1>
+<p>Labels are missing or ARIA-only; layout is a table. Everything sits outside a form element.</p>
+
+<table>
+  <tr><th>Given name</th><td><input type="text" name="gname"></td></tr>
+  <tr><th>Surname</th><td><input type="text" name="sname"></td></tr>
+  <tr><th>Contact email</th><td><input type="email" name="cemail"></td></tr>
+  <tr><th>Telephone</th><td><input type="tel" name="ctel"></td></tr>
+</table>
+
+<h2 id="exp-head">Professional background</h2>
+<input type="text" aria-labelledby="exp-head" aria-describedby="exp-desc" name="background">
+<span id="exp-desc" style="color:#777;font-size:12px">Tell us about your professional experience.</span>
+
+<div style="margin-top:20px">
+  <input type="text" aria-label="Preferred locations" name="locs">
+</div>
+
+<div style="margin-top:20px">
+  <div role="group" aria-label="Employment status">
+    <label style="display:block;font-size:13px"><input type="radio" name="emp" value="employed" style="width:auto"> Employed</label>
+    <label style="display:block;font-size:13px"><input type="radio" name="emp" value="student" style="width:auto"> Student</label>
+  </div>
+</div>
+
+<button type="button" onclick="alert('Site submit — extension must never click this.')">Send survey</button>
+</body>
+</html>
