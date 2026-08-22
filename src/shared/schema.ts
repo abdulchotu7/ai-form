@@ -83,7 +83,10 @@ export const SettingsSchema = z.object({
   llmApiKey: str.default(
     (typeof import.meta !== 'undefined' && import.meta.env?.VITE_NVIDIA_API_KEY) || '',
   ),
-  llmModel: str.default('meta/llama-3.1-8b-instruct'),
+  // ponytail: gpt-oss-20b benchmarked fastest with reliable JSON + good prose
+  // on integrate.api.nvidia.com (llama-3.1-8b mangles long narrative JSON;
+  // 70b+ models hit multi-minute queues). Re-benchmark if latency regresses.
+  llmModel: str.default('openai/gpt-oss-20b'),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
