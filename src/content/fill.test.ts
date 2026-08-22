@@ -134,3 +134,38 @@ describe('file attachment', () => {
     expect(applyFill(targets.get(fields[0].id)!, '').status).toBe('skipped-sensitive');
   });
 });
+
+describe('masked input tolerance', () => {
+  it('accepts formatting-only differences on phone fields', () => {
+    const { fields, targets } = setup(`<label for="m">Mobile Number</label><input id="m" type="tel">`);
+    const el = targets.get(fields[0].id)!.elements[0] as HTMLInputElement;
+    // Simulate a mask component rewriting the value during the input event.
+    el.addEventListener('input', () => { (el as HTMLInputElement).value = '(630) 199-9626'; }, { once: true });
+    const r = applyFill(targets.get(fields[0].id)!, '6301999626');
+    expect(r.status).toBe('filled');
+  });
+
+  it('falls back to direct write when the prototype setter is reverted', () => {
+    const { fields, targets } = setup(`<label for="x">First Name</label><input id="x">`);
+    const el = targets.get(fields[0].id)!.elements[0] as HTMLInputElement;
+    // Simulate a framework reverting the value right after the setter.
+    let calls = 0;
+    const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!;
+    const origSet = desc.set!;
+    Object.defineProperty(HTMLInputElement.prototype, 'value', {
+      ...desc,
+      set(v: string) {
+        calls++;
+        if (calls % 2 === 1) origSet.call(this, ''); // first write swallowed
+        else origSet.call(this, v);
+      },
+    });
+    try {
+      const r = applyFill(targets.get(fields[0].id)!, 'Abdul');
+      expect(r.status).toBe('filled');
+      expect(el.value).toBe('Abdul');
+    } finally {
+      Object.defineProperty(HTMLInputElement.prototype, 'value', desc);
+    }
+  });
+});

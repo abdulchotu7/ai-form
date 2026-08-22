@@ -14,6 +14,13 @@ import { isSensitive } from '../shared/match';
  * bare input events or untrusted ones — focusing + keydown/input(InputEvent)/keyup
  * clears most of them.
  */
+/** Accept masked-input reformatting: "(630) 199-9626" still matches "6301999626". */
+export function valuesMatch(actual: string | null | undefined, expected: string): boolean {
+  if (actual === expected) return true;
+  const strip = (s: string) => s.replace(/[\s()\-.+/]/g, '');
+  return strip(actual ?? '') === strip(expected);
+}
+
 function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   const proto =
     el instanceof HTMLTextAreaElement
@@ -135,7 +142,15 @@ export function applyFill(target: FillTarget, rawValue: string, resumeFile?: Sto
       } catch {
         return status('failed');
       }
-      return el.value === v ? status('filled') : status('failed');
+      if (!valuesMatch(el.value, v)) {
+        // Fallback: some frameworks' value trackers swallow the prototype
+        // setter, and masks may revert it. Write directly and re-fire.
+        el.focus();
+        el.value = v;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return valuesMatch(el.value, v) ? status('filled') : status('failed');
     }
     case 'textarea': {
       const el = target.elements[0] as HTMLTextAreaElement;
