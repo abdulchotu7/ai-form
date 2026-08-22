@@ -83,28 +83,36 @@ function normalizeBaseUrl(url: string): string {
  *  small models don't truncate or mangle it. */
 const BATCH_SIZE = 3;
 
+export interface SuggestResult {
+  suggestions: Map<string, Suggestion>;
+  /** Per-batch failure reasons, in order. Empty when every batch succeeded. */
+  errors: string[];
+}
+
 export async function suggestWithLlm(
   fields: FieldDescriptor[],
   profile: Profile,
   config: LlmConfig,
   pageContext?: PageContext,
-): Promise<Map<string, Suggestion>> {
-  const out = new Map<string, Suggestion>();
+): Promise<SuggestResult> {
+  const out: SuggestResult = { suggestions: new Map(), errors: [] };
   if (!config.baseUrl || !config.model || fields.length === 0) return out;
 
   const known = new Set(fields.map((f) => f.id));
   // Batches run in parallel: one malformed batch loses only its own fields.
   const chunks: Promise<Map<string, Suggestion>>[] = [];
   for (let i = 0; i < fields.length; i += BATCH_SIZE) {
-    chunks.push(
-      requestBatch(fields.slice(i, i + BATCH_SIZE), profile, config, pageContext, known).catch(
-        () => new Map<string, Suggestion>(),
-      ),
-    );
+    chunks.push(requestBatch(fields.slice(i, i + BATCH_SIZE), profile, config, pageContext, known));
   }
-  for (const batch of await Promise.all(chunks)) {
-    for (const [k, v] of batch) out.set(k, v);
-  }
+  const settled = await Promise.allSettled(chunks);
+  settled.forEach((r, i) => {
+    if (r.status === 'fulfilled') {
+      for (const [k, v] of r.value) out.suggestions.set(k, v);
+    } else {
+      const first = i * BATCH_SIZE + 1;
+      out.errors.push(`questions ${first}–${Math.min(first + BATCH_SIZE - 1, fields.length)}: ${r.reason?.message ?? 'failed'}`);
+    }
+  });
   return out;
 }
 
@@ -148,8 +156,9 @@ async function requestBatch(
         ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
       },
       body: JSON.stringify(body),
-      // Bound worst-case hangs; the default fast model answers in ~2s.
-      signal: AbortSignal.timeout(90_000),
+      // Bound worst-case hangs; queued endpoints can stall far longer than
+      // a good run (~5–15s). Better a retryable failure than a frozen panel.
+      signal: AbortSignal.timeout(45_000),
     });
     if (!res.ok) {
       // 400: some servers reject response_format. 429/5xx: free-tier rate limits

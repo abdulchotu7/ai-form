@@ -41,7 +41,7 @@ describe.skipIf(!key)('live NVIDIA endpoint (context building)', () => {
   // NOTE: no salary info anywhere → must stay unresolved.
 
   it('composes a professional summary from experience facts', { timeout: 180_000 }, async () => {
-    const out = await suggestWithLlm([field({ id: 'f_sum', label: 'Tell us about your professional experience.' })], profile, config);
+    const out = (await suggestWithLlm([field({ id: 'f_sum', label: 'Tell us about your professional experience.' })], profile, config)).suggestions;
     const s = out.get('f_sum');
     expect(s).toBeDefined();
     expect(s!.value).toBeTruthy();
@@ -51,7 +51,7 @@ describe.skipIf(!key)('live NVIDIA endpoint (context building)', () => {
   });
 
   it('maps options exactly and derives relocation answer', { timeout: 180_000 }, async () => {
-    const out = await suggestWithLlm(
+    const { suggestions: out } = await suggestWithLlm(
       [field({ id: 'f_rel', label: 'Are you willing to relocate?', options: ['No', 'Yes'] })],
       profile,
       config,
@@ -60,7 +60,7 @@ describe.skipIf(!key)('live NVIDIA endpoint (context building)', () => {
   });
 
   it('never fabricates missing information (salary)', { timeout: 180_000 }, async () => {
-    const out = await suggestWithLlm([field({ id: 'f_sal', label: 'What is your expected salary?' })], profile, config);
+    const out = (await suggestWithLlm([field({ id: 'f_sal', label: 'What is your expected salary?' })], profile, config)).suggestions;
     const s = out.get('f_sal');
     expect(s?.value ?? null).toBeNull(); // no invention
   });

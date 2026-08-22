@@ -23,14 +23,14 @@ describe('suggestWithLlm', () => {
     vi.stubGlobal('fetch', mockFetch({
       choices: [{ message: { content: JSON.stringify({ suggestions: [{ fieldId: 'f1', value: '5', confidence: 0.9, reason: 'dates' }] }) } }],
     }));
-    const out = await suggestWithLlm([field({ id: 'f1', label: 'Years of experience' })], profile, config);
+    const out = (await suggestWithLlm([field({ id: 'f1', label: 'Years of experience' })], profile, config)).suggestions;
     expect(out.get('f1')?.value).toBe('5');
     expect(out.get('f1')?.source).toBe('llm');
   });
 
   it('degrades gracefully on malformed JSON (returns empty, no throw)', async () => {
     vi.stubGlobal('fetch', mockFetch({ choices: [{ message: { content: 'sorry, I cannot' } }] }));
-    const out = await suggestWithLlm([field({ id: 'f1' })], profile, config);
+    const out = (await suggestWithLlm([field({ id: 'f1' })], profile, config)).suggestions;
     expect(out.size).toBe(0);
   });
 
@@ -38,7 +38,7 @@ describe('suggestWithLlm', () => {
     const broken = 'Here you go:\n{"suggestions": [{"fieldId": "f1", "value": "42", "confidence": 0.8,'; // truncated
     vi.stubGlobal('fetch', mockFetch({ choices: [{ message: { content:
       broken + '\n{"fieldId":"f1","value":"42","confidence":0.8,"reason":"ok"}' } }] }));
-    const out = await suggestWithLlm([field({ id: 'f1' })], profile, config);
+    const out = (await suggestWithLlm([field({ id: 'f1' })], profile, config)).suggestions;
     expect(out.get('f1')?.value).toBe('42');
   });
 
@@ -49,7 +49,7 @@ describe('suggestWithLlm', () => {
         { fieldId: 'made-up', value: 'evil', confidence: 0.99 },
       ] }) } }],
     }));
-    const out = await suggestWithLlm([field({ id: 'f1' })], profile, config);
+    const out = (await suggestWithLlm([field({ id: 'f1' })], profile, config)).suggestions;
     expect(out.has('f1')).toBe(true);
     expect(out.has('made-up')).toBe(false);
   });
@@ -58,7 +58,7 @@ describe('suggestWithLlm', () => {
     vi.stubGlobal('fetch', mockFetch({
       choices: [{ message: { content: '```json\n{"suggestions":[{"fieldId":"f1","value":"Yes","confidence":0.8}]}\n```' } }],
     }));
-    const out = await suggestWithLlm([field({ id: 'f1' })], profile, config);
+    const out = (await suggestWithLlm([field({ id: 'f1' })], profile, config)).suggestions;
     expect(out.get('f1')?.value).toBe('Yes');
   });
 
@@ -76,14 +76,16 @@ describe('suggestWithLlm', () => {
 
   it('degrades gracefully on HTTP errors after retry (returns empty, no throw)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 500 })));
-    const out = await suggestWithLlm([field({ id: 'f1' })], profile, config);
-    expect(out.size).toBe(0);
+    const { suggestions, errors } = await suggestWithLlm([field({ id: 'f1' })], profile, config);
+    expect(suggestions.size).toBe(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/HTTP 500/);
   });
 
   it('returns empty without any network call when unconfigured', async () => {
     const f = vi.fn();
     vi.stubGlobal('fetch', f);
-    const out = await suggestWithLlm([field({ id: 'f1' })], profile, { baseUrl: '', apiKey: '', model: '' });
+    const out = (await suggestWithLlm([field({ id: 'f1' })], profile, { baseUrl: '', apiKey: '', model: '' })).suggestions;
     expect(out.size).toBe(0);
     expect(f).not.toHaveBeenCalled();
   });

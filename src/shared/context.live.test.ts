@@ -32,7 +32,7 @@ describe.skipIf(!key || !resume)('live context building from real documents', ()
   profile.documents.portfolio = portfolio;
 
   it('composes a professional summary grounded in the actual resume', { timeout: 90_000 }, async () => {
-    const out = await suggestWithLlm([field({ id: 'f1', label: 'Tell us about your professional experience.' })], profile, config);
+    const out = (await suggestWithLlm([field({ id: 'f1', label: 'Tell us about your professional experience.' })], profile, config)).suggestions;
     const s = out.get('f1');
     console.log('  [summary]', s?.value);
     expect(s?.value).toBeTruthy();
@@ -40,13 +40,13 @@ describe.skipIf(!key || !resume)('live context building from real documents', ()
   });
 
   it('answers years of experience from resume dates', { timeout: 90_000 }, async () => {
-    const out = await suggestWithLlm([field({ id: 'f2', label: 'How many years of professional experience do you have?' })], profile, config);
+    const out = (await suggestWithLlm([field({ id: 'f2', label: 'How many years of professional experience do you have?' })], profile, config)).suggestions;
     console.log('  [years]', out.get('f2')?.value, '—', out.get('f2')?.reason);
     expect(out.get('f2')?.value).toBeTruthy();
   });
 
   it('describes projects from the portfolio', { timeout: 90_000 }, async () => {
-    const out = await suggestWithLlm(
+    const { suggestions: out } = await suggestWithLlm(
       [field({ id: 'f3', label: 'Describe a project you are most proud of.' })],
       profile,
       config,

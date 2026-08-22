@@ -131,19 +131,26 @@ export default function App() {
         if (settings.llmBaseUrl && settings.llmModel) {
           setStageLabel(`Asking the AI about ${ambiguous.length} open question${ambiguous.length > 1 ? 's' : ''}…`);
           try {
-            const llm = await suggestWithLlm(
+            const llmResult = await suggestWithLlm(
               ambiguous,
               profile,
               { baseUrl: settings.llmBaseUrl, apiKey: settings.llmApiKey, model: settings.llmModel },
               detected.pageContext,
             );
             for (const a of analyzed) {
-              const s = llm.get(a.field.id);
+              const s = llmResult.suggestions.get(a.field.id);
               // Only fill gaps: deterministic matches always win.
               if (s && !a.sensitive && a.suggestion.source === 'unresolved') {
                 a.suggestion = s;
                 a.included = s.value !== null && s.confidence >= 0.7;
               }
+            }
+            if (llmResult.errors.length > 0) {
+              setNotice(
+                llmResult.suggestions.size === 0
+                  ? `AI suggestions failed — check your endpoint/model in Settings. (${llmResult.errors[0]})`
+                  : `Some AI answers failed and were left blank. (${llmResult.errors[0]})`,
+              );
             }
           } catch (e) {
             setNotice(e instanceof Error ? e.message : 'AI suggestions failed; showing deterministic matches only.');
