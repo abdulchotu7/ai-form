@@ -13,6 +13,7 @@ export interface AnalyzedField {
   sensitive: boolean;
   included: boolean;
   fillStatus?: FillResult['status'];
+  fillDetail?: string;
 }
 
 type Phase = 'idle' | 'analyzing' | 'ready' | 'filling' | 'filled';
@@ -194,9 +195,18 @@ export default function App() {
         .map((f) => ({ fieldId: f.field.id, value: f.suggestion.value! }));
       const attachResume = analysis.fields.some((f) => f.included && f.field.type === 'file');
       const { results } = await fillFields(values, attachResume ? resumeFile ?? undefined : undefined);
-      const byId = new Map(results.map((r) => [r.fieldId, r.status]));
+      const byId = new Map(results.map((r) => [r.fieldId, r]));
       setAnalysis((prev) =>
-        prev ? { ...prev, fields: prev.fields.map((f) => ({ ...f, fillStatus: byId.get(f.field.id) })) } : prev,
+        prev
+          ? {
+              ...prev,
+              fields: prev.fields.map((f) => ({
+                ...f,
+                fillStatus: byId.get(f.field.id)?.status,
+                fillDetail: byId.get(f.field.id)?.detail,
+              })),
+            }
+          : prev,
       );
       setPhase('filled');
     } catch (e) {

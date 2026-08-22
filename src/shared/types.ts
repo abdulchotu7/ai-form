@@ -52,6 +52,8 @@ export type FillStatus = 'filled' | 'not-found' | 'skipped-sensitive' | 'failed'
 export interface FillResult {
   fieldId: string;
   status: FillStatus;
+  /** Short human-readable reason for failures, shown in the review list. */
+  detail?: string;
 }
 
 /** A user-provided binary attachment (resume), base64-encoded for storage/messages. */

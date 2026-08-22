@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { scanForm } from './detect';
-import { applyFill } from './fill';
+import { applyFill, valuesMatch } from './fill';
 
 function setup(html: string) {
   document.body.innerHTML = html;
@@ -167,5 +167,18 @@ describe('masked input tolerance', () => {
     } finally {
       Object.defineProperty(HTMLInputElement.prototype, 'value', desc);
     }
+  });
+});
+
+describe('valuesMatch (mask tolerance)', () => {
+  it('accepts country-code prefixes from phone masks', () => {
+    expect(valuesMatch('+1 630 199 9626', '6301999626')).toBe(true);
+    expect(valuesMatch('(630) 199-9626', '6301999626')).toBe(true);
+    expect(valuesMatch('₹12,00,000', '1200000')).toBe(true);
+  });
+  it('still rejects genuinely wrong values', () => {
+    expect(valuesMatch('Abdul Rahim', 'Abdul')).toBe(false);
+    expect(valuesMatch('testy@example.com', 'abdul@example.com')).toBe(false);
+    expect(valuesMatch('', '6301999626')).toBe(false);
   });
 });

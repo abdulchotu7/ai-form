@@ -55,7 +55,7 @@ function FieldRow({ f, onUpdate }: { f: AnalyzedField; onUpdate: Props['onUpdate
           <span className="row-value-preview">
             {unresolved ? <em>No information available</em> : s.value}
             {f.fillStatus === 'filled' && <span className="pill ok">filled</span>}
-            {f.fillStatus === 'failed' && <span className="pill fail">couldn't fill</span>}
+            {f.fillStatus === 'failed' && <span className="pill fail" title={f.fillDetail}>couldn't fill{f.fillDetail ? ` — ${f.fillDetail}` : ''}</span>}
             {f.fillStatus === 'not-found' && <span className="pill fail">not found on page</span>}
           </span>
         </span>

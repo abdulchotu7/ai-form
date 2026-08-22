@@ -14,11 +14,17 @@ import { isSensitive } from '../shared/match';
  * bare input events or untrusted ones — focusing + keydown/input(InputEvent)/keyup
  * clears most of them.
  */
-/** Accept masked-input reformatting: "(630) 199-9626" still matches "6301999626". */
+/** Accept masked-input reformatting: "(630) 199-9626" or "+1 630 199 9626" still match "6301999626". */
 export function valuesMatch(actual: string | null | undefined, expected: string): boolean {
   if (actual === expected) return true;
   const strip = (s: string) => s.replace(/[\s()\-.+/]/g, '');
-  return strip(actual ?? '') === strip(expected);
+  const a = strip(actual ?? '');
+  const e = strip(expected);
+  if (a === e) return true;
+  // Masks may also prepend country codes / currency symbols — compare digit tails.
+  const da = a.replace(/\D/g, '');
+  const de = e.replace(/\D/g, '');
+  return da !== '' && de !== '' && (da.endsWith(de) || de.endsWith(da));
 }
 
 function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
@@ -150,7 +156,9 @@ export function applyFill(target: FillTarget, rawValue: string, resumeFile?: Sto
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
       }
-      return valuesMatch(el.value, v) ? status('filled') : status('failed');
+      return valuesMatch(el.value, v)
+        ? status('filled')
+        : { fieldId: target.descriptor.id, status: 'failed', detail: `page kept "${el.value.slice(0, 40)}" instead of "${v.slice(0, 40)}"` };
     }
     case 'textarea': {
       const el = target.elements[0] as HTMLTextAreaElement;
