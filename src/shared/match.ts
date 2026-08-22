@@ -218,6 +218,20 @@ const RULES: AliasRule[] = [
     resolve: (p) => val(p.jobSearch.workAuthorization, 'jobSearch.workAuthorization'),
   },
   {
+    // Generic single-word labels go LAST so specific concepts
+    // ("email address", "authorized to work in this country") win first.
+    patterns: [/\bgender\b/, /\bsex\b/],
+    resolve: (p) => val(p.personal.gender, 'personal.gender'),
+  },
+  {
+    patterns: [/\baddress\b/, /street address/, /mailing address/, /current location/, /where (do|are) you (live|located)/],
+    resolve: (p) => val(p.personal.address, 'personal.address'),
+  },
+  {
+    patterns: [/\bcountry\b/, /nationality/],
+    resolve: (p) => val(p.personal.country, 'personal.country'),
+  },
+  {
     patterns: [/skills?/, /tech(nical)? stack/, /technologies/, /competencies/],
     resolve: (p) => (p.skills.length ? { value: p.skills.join(', '), source: 'profile', reason: 'Skills list from profile.' } : null),
   },

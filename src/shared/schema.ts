@@ -39,6 +39,9 @@ export const ProfileSchema = z.object({
       lastName: str.default(''),
       fullName: str.default(''),
       preferredName: str.default(''),
+      gender: str.default(''),
+      country: str.default(''),
+      address: str.default(''),
     })
     .default({}),
   contact: z
