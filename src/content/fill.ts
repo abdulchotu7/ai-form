@@ -106,9 +106,12 @@ export function applyFill(target: FillTarget, rawValue: string, resumeFile?: Sto
   const status = (s: FillStatus): FillResult => ({ fieldId: target.descriptor.id, status: s });
 
   // File inputs are handled before the sensitive gate: they are only filled
-  // when the user's own saved resume is explicitly passed in.
+  // when the user's own saved resume is explicitly passed in — and only when
+  // the field actually asks for a resume/CV (never "upload passport").
   if (target.kind === 'file') {
-    if (!resumeFile || !target.elements[0]) return status('skipped-sensitive');
+    const d = target.descriptor;
+    const wantsResume = /resume|\bcv\b|curriculum/i.test(`${d.label} ${d.context} ${d.name}`);
+    if (!wantsResume || !resumeFile || !target.elements[0]) return status('skipped-sensitive');
     return fillFile(target.elements[0] as HTMLInputElement, resumeFile) ? status('filled') : status('failed');
   }
   if (isSensitive(target.descriptor)) return status('skipped-sensitive');

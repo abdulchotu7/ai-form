@@ -109,3 +109,28 @@ describe('fill safety', () => {
     expect(applyFill(targets.get(fields[0].id)!, '   ').status).toBe('empty');
   });
 });
+
+describe('file attachment', () => {
+  const resume = { name: 'resume.pdf', type: 'application/pdf', data: btoa('fake pdf bytes') };
+
+  it('attaches the saved resume to a resume upload field', () => {
+    const { fields, targets } = setup(`<label for="cv">Upload resume</label><input id="cv" type="file">`);
+    const r = applyFill(targets.get(fields[0].id)!, '', resume);
+    expect(r.status).toBe('filled');
+    const el = targets.get(fields[0].id)!.elements[0] as HTMLInputElement;
+    expect(el.files?.length).toBe(1);
+    expect(el.files?.[0].name).toBe('resume.pdf');
+    expect(el.files?.[0].size).toBe(atob(resume.data).length); // decoded byte count
+  });
+
+  it('refuses non-resume file fields even when a resume is passed', () => {
+    const { fields, targets } = setup(`<label for="pp">Upload passport scan</label><input id="pp" type="file">`);
+    expect(applyFill(targets.get(fields[0].id)!, '', resume).status).toBe('skipped-sensitive');
+    expect((targets.get(fields[0].id)!.elements[0] as HTMLInputElement).files?.length ?? 0).toBe(0);
+  });
+
+  it('does nothing without an explicit file', () => {
+    const { fields, targets } = setup(`<label for="cv2">Resume</label><input id="cv2" type="file">`);
+    expect(applyFill(targets.get(fields[0].id)!, '').status).toBe('skipped-sensitive');
+  });
+});

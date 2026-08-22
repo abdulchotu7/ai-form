@@ -227,6 +227,110 @@ check(
 );
 check('form B resolves aria-label', b.fields.some((f) => /preferred locations/i.test(f.label)));
 
+/* ---- form C: shadow DOM (Workday-style widgets) ---- */
+await page.goto(`http://localhost:${PORT}/test/form-shadow.html`, { waitUntil: 'load' });
+const sh = await detect(`http://localhost:${PORT}/test/form-shadow.html`).then((r) => r.res);
+const shadowFields = sh?.fields ?? [];
+check('shadow DOM fields detected', shadowFields.length >= 3, `${shadowFields.length} fields`);
+check('nested shadow roots pierced (select inside widget-in-widget)',
+  shadowFields.some((f) => f.type === 'select' && f.options.includes('B.Tech')));
+const shName = shadowFields.find((f) => f.label === 'First Name');
+check('shadow field found for fill', Boolean(shName));
+// Fill via a frame-scoped sendMessage (the shadow page is the current page).
+await swEval(async ({ url, id }) => {
+  const [tab] = await chrome.tabs.query({ url });
+  await chrome.tabs.sendMessage(tab.id, { type: 'AF_FILL', values: [{ fieldId: id, value: 'Shadowy' }] }, { frameId: 0 });
+}, { url: `http://localhost:${PORT}/test/form-shadow.html`, id: shName?.id });
+const shadowVal = await page.evaluate(() => document.querySelector('workday-style-form')?.shadowRoot?.querySelector('#s-name')?.value);
+check('shadow DOM input filled', shadowVal === 'Shadowy', String(shadowVal));
+
+/* ---- form D: iframe-embedded application with colliding labels ---- */
+await page.goto(`http://localhost:${PORT}/test/form-iframe.html`, { waitUntil: 'load' });
+await page.waitForTimeout(500); // let the child frame's content script register
+
+// Enumerate real Chrome frameIds the way api.ts does — via an allFrames injection.
+const iframeTab = await swEval(async (url) => {
+  const [tab] = await chrome.tabs.query({ url });
+  return tab.id;
+}, `http://localhost:${PORT}/test/form-iframe.html`);
+const realFrameIds = await swEval(async (tabId) => {
+  const injections = await chrome.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    func: () => 'af-probe',
+  });
+  return injections.map((r) => r.frameId);
+}, iframeTab);
+check('both frames enumerated', realFrameIds.length === 2, JSON.stringify(realFrameIds));
+
+// Detect per-frame and namespace ids exactly like sidepanel/api.ts.
+const perFrame = await swEval(async ({ tabId, frameIds }) => {
+  const out = [];
+  for (const frameId of frameIds) {
+    try {
+      const res = await chrome.tabs.sendMessage(tabId, { type: 'AF_DETECT' }, { frameId });
+      out.push({ frameId, fields: res.fields });
+    } catch {
+      out.push({ frameId, fields: [] });
+    }
+  }
+  return out;
+}, { tabId: iframeTab, frameIds: realFrameIds });
+const allIframeFields = perFrame.flatMap((fr) => fr.fields.map((f) => ({ ...f, id: `g${fr.frameId}:${f.id}` })));
+check('iframe child fields detected', allIframeFields.filter((f) => f.label === 'Email').length === 1);
+const firstNames = allIframeFields.filter((f) => f.label === 'First Name');
+check('colliding labels got distinct namespaced ids', firstNames.length === 2 && firstNames[0].id !== firstNames[1].id,
+      firstNames.map((f) => f.id).join(' vs '));
+
+// Fill BOTH First Name fields to different values through the namespaced pipeline.
+for (const [i, f] of firstNames.entries()) {
+  const frameId = Number(f.id.match(/^g(\d+):/)[1]);
+  const fid = f.id.slice(f.id.indexOf(':') + 1); // strip per-frame namespace
+  const fr = await swEval(async ({ tabId, frameId, fid, v }) => {
+    try {
+      return await chrome.tabs.sendMessage(tabId, { type: 'AF_FILL', values: [{ fieldId: fid, value: v }] }, { frameId });
+    } catch (e) {
+      return { error: e.message };
+    }
+  }, { tabId: iframeTab, frameId, fid, v: i === 0 ? 'TopFrame' : 'ChildFrame' });
+}
+await page.waitForTimeout(300);
+const topVal = await page.evaluate(() => document.getElementById('t-first')?.value);
+const childVal = await page.frames().find((f) => f.url().includes('form-embed'))?.inputValue('#e-first');
+check('top-frame field routed correctly', topVal === 'TopFrame', String(topVal));
+check('iframe field routed correctly (no cross-wire)', childVal === 'ChildFrame', String(childVal));
+
+/* ---- form E: resume file attach + sensitive-file refusal ---- */
+await page.goto(`http://localhost:${PORT}/test/form-upload.html`, { waitUntil: 'load' });
+const up = await detect(`http://localhost:${PORT}/test/form-upload.html`).then((r) => r.res);
+const cvField = up.fields.find((f) => f.type === 'file' && /resume/i.test(f.label));
+const ppField = up.fields.find((f) => f.type === 'file' && /passport/i.test(f.label));
+check('both file inputs detected', Boolean(cvField && ppField), `${up.fields.length} fields total`);
+await swEval(async ({ url, cvId, ppId }) => {
+  const [tab] = await chrome.tabs.query({ url });
+  const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x74, 0x65, 0x73, 0x74]); // "%PDF-test"
+  let bin = '';
+  bytes.forEach((b) => (bin += String.fromCharCode(b)));
+  const resumeFile = { name: 'test-resume.pdf', type: 'application/pdf', data: btoa(bin) };
+  await chrome.tabs.sendMessage(tab.id, { type: 'AF_FILL', values: [
+    { fieldId: cvId, value: 'test-resume.pdf' }, { fieldId: ppId, value: 'test-resume.pdf' },
+  ], resumeFile });
+}, { url: `http://localhost:${PORT}/test/form-upload.html`, cvId: cvField?.id, ppId: ppField?.id });
+const uploadState = await swEval(async (tabId) => {
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => ({
+      cv: document.getElementById('cv')?.files?.[0]?.name ?? null,
+      cvSize: document.getElementById('cv')?.files?.[0]?.size ?? 0,
+      pp: document.getElementById('pp')?.files?.length ?? 0,
+    }),
+  });
+  return res.result;
+}, await swEval(async (url) => (await chrome.tabs.query({ url }))[0].id, `http://localhost:${PORT}/test/form-upload.html`));
+check('resume attached to upload field', uploadState.cv === 'test-resume.pdf');
+check('attached file has real bytes', uploadState.cvSize === 9, String(uploadState.cvSize));
+check('passport upload never touched', uploadState.pp === 0);
+
+
 await context.close();
 server.close();
 console.log(failures === 0 ? '\nAll E2E checks passed.' : `\n${failures} E2E checks FAILED.`);

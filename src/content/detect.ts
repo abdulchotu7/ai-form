@@ -45,8 +45,11 @@ function inputType(input: HTMLInputElement): FieldType {
 export function resolveLabel(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, doc: Document): { label: string; context: string } {
   let label = '';
 
+  // Shadow-root controls keep their <label for> inside the root, not the document.
+  const localRoot: ParentNode = el.getRootNode() instanceof ShadowRoot ? (el.getRootNode() as ShadowRoot) : doc;
+
   if (el.id) {
-    label = text(doc.querySelector(`label[for="${CSS.escape(el.id)}"]`));
+    label = text(localRoot.querySelector(`label[for="${CSS.escape(el.id)}"]`) ?? doc.querySelector(`label[for="${CSS.escape(el.id)}"]`));
   }
   if (!label) {
     const wrap = el.closest('label');
@@ -96,8 +99,9 @@ export function resolveLabel(el: HTMLInputElement | HTMLTextAreaElement | HTMLSe
 
 function optionLabel(el: HTMLInputElement): string {
   // Prefer an associated label for radios/checkboxes, else value, else nearby text.
+  const localRoot: ParentNode = el.getRootNode() instanceof ShadowRoot ? (el.getRootNode() as ShadowRoot) : el.ownerDocument;
   if (el.id) {
-    const l = el.ownerDocument.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+    const l = localRoot.querySelector(`label[for="${CSS.escape(el.id)}"]`);
     if (l) return text(l);
   }
   const wrap = el.closest('label');
@@ -118,11 +122,12 @@ interface ScanResult {
 /**
  * Collect fillable controls including those inside open shadow roots
  * (Workday and other modern ATS render forms in web components).
+ * Recurses through arbitrarily nested shadow roots.
  */
-function collectControls(root: Document): Element[] {
+function collectControls(root: Document | ShadowRoot): Element[] {
   const out = [...root.querySelectorAll('input, textarea, select')];
   for (const el of root.querySelectorAll('*')) {
-    if (el.shadowRoot) out.push(...el.shadowRoot.querySelectorAll('input, textarea, select'));
+    if (el.shadowRoot) out.push(...collectControls(el.shadowRoot));
   }
   return out;
 }

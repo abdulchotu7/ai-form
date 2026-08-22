@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head><title>Shadow DOM Form</title></head>
+<body>
+  <h1>Careers (shadow DOM)</h1>
+  <workday-style-form></workday-style-form>
+  <script>
+    // Mimics Workday-style widgets: form controls live inside open shadow roots.
+    class WorkdayStyleForm extends HTMLElement {
+      connectedCallback() {
+        const outer = this.attachShadow({ mode: 'open' });
+        outer.innerHTML = `
+          <label for="s-name">First Name</label><input id="s-name">
+          <label for="s-email">Email</label><input id="s-email" type="email">
+        `;
+        // Nested shadow root: widget inside a widget.
+        const inner = document.createElement('nested-widget');
+        outer.appendChild(inner);
+        const innerRoot = inner.attachShadow({ mode: 'open' });
+        innerRoot.innerHTML = `
+          <select id="s-edu">
+            <option value="">Select</option>
+            <option value="B.Tech">B.Tech</option>
+            <option value="M.Sc">M.Sc</option>
+          </select>
+        `;
+      }
+    }
+    customElements.define('workday-style-form', WorkdayStyleForm);
+  </script>
+</body>
+</html>

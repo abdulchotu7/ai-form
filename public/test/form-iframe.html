@@ -1,0 +1,12 @@
+<!doctype html>
+<html>
+<head><title>Iframe Host Page</title></head>
+<body>
+  <h1>Careers page (top frame)</h1>
+  <!-- Top frame HAS its own field with the SAME label as one inside the iframe —
+       per-frame id namespacing and routing must not cross wires. -->
+  <label for="t-first">First Name</label><input id="t-first">
+
+  <iframe src="/test/form-embed.html" width="600" height="300"></iframe>
+</body>
+</html>
