@@ -115,6 +115,18 @@ interface ScanResult {
   targets: Map<string, FillTarget>;
 }
 
+/**
+ * Collect fillable controls including those inside open shadow roots
+ * (Workday and other modern ATS render forms in web components).
+ */
+function collectControls(root: Document): Element[] {
+  const out = [...root.querySelectorAll('input, textarea, select')];
+  for (const el of root.querySelectorAll('*')) {
+    if (el.shadowRoot) out.push(...el.shadowRoot.querySelectorAll('input, textarea, select'));
+  }
+  return out;
+}
+
 // Stable per-element ids: the same control keeps its id across rescans,
 // so DOM mutations between Analyze and Fill cannot shift ids onto the
 // wrong inputs. Module-level so every scan shares one id space.
@@ -134,7 +146,7 @@ export function scanForm(root: Document): ScanResult {
     return id;
   };
 
-  const controls = Array.from(root.querySelectorAll('input, textarea, select')).filter((el) => {
+  const controls = collectControls(root).filter((el) => {
     if (el instanceof HTMLInputElement && (el.disabled || el.readOnly)) return false;
     if ((el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) && el.disabled) return false;
     if (el instanceof HTMLInputElement && SKIP_INPUT_TYPES.has(el.type)) return false;

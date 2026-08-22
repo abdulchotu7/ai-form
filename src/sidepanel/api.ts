@@ -33,26 +33,94 @@ async function activeTab(): Promise<chrome.tabs.Tab> {
   return tab;
 }
 
-/** Message the active tab's content script; inject it first if missing (e.g. page opened before install). */
-async function sendToTab<T>(msg: ContentRequest): Promise<T> {
-  const tab = await activeTab();
+/** Frame ids of a tab, from the background registry (content scripts check in on load). */
+async function tabFrames(tabId: number): Promise<number[]> {
   try {
-    return await chrome.tabs.sendMessage(tab.id!, msg);
+    const frames = await chrome.runtime.sendMessage({ type: 'AF_FRAMES', tabId });
+    return Array.isArray(frames) ? frames : [];
   } catch {
-    if (!tab.url || !/^https?:/i.test(tab.url)) {
-      throw new Error('This page cannot be analyzed. Open a normal http(s) page.');
-    }
-    await chrome.scripting.executeScript({ target: { tabId: tab.id! }, files: ['content.js'] });
-    return await chrome.tabs.sendMessage(tab.id!, msg);
+    return [];
   }
 }
 
+/**
+ * Active tab + the frames worth talking to. Content scripts run in every
+ * frame (all_frames), so ATS forms embedded in an iframe are covered.
+ */
+async function activeTabWithFrames(): Promise<{ tabId: number; frames: number[] }> {
+  const tab = await activeTab();
+  if (!tab.url || !/^https?:/i.test(tab.url)) {
+    throw new Error('This page cannot be analyzed. Open a normal http(s) page.');
+  }
+  let frames = await tabFrames(tab.id!);
+  if (frames.length === 0) {
+    // Page opened before the extension loaded — inject into every frame.
+    await chrome.scripting.executeScript({ target: { tabId: tab.id!, allFrames: true }, files: ['content.js'] });
+    frames = await tabFrames(tab.id!);
+    if (frames.length === 0) frames = [0]; // registry race fallback: top frame
+  }
+  // Top frame is always included; registered sub-frames come first.
+  return { tabId: tab.id!, frames: [...new Set([0, ...frames])] };
+}
+
+/** Field ids are namespaced per frame so ids from different frames can't collide. */
+const prefix = (frameId: number) => `g${frameId}:`;
+const split = (prefixed: string): [number, string] => {
+  const m = prefixed.match(/^g(\d+):(.*)$/);
+  return m ? [Number(m[1]), m[2]] : [0, prefixed];
+};
+
+function sendToFrame<T>(tabId: number, frameId: number, msg: ContentRequest): Promise<T> {
+  return chrome.tabs.sendMessage(tabId, msg, { frameId }) as Promise<T>;
+}
+
 export async function detectFields(): Promise<DetectResponse> {
-  return sendToTab<DetectResponse>({ type: 'AF_DETECT' });
+  const { tabId, frames } = await activeTabWithFrames();
+  const responses = await Promise.all(
+    frames.map(async (frameId) => {
+      try {
+        return { frameId, res: await sendToFrame<DetectResponse>(tabId, frameId, { type: 'AF_DETECT' }) };
+      } catch {
+        return null; // frame without content script / not analyzable — skip
+      }
+    }),
+  );
+  const fields = [];
+  let domVersion = 0;
+  for (const r of responses) {
+    if (!r) continue;
+    domVersion = Math.max(domVersion, r.res.domVersion);
+    for (const f of r.res.fields) fields.push({ ...f, id: `${prefix(r.frameId)}${f.id}` });
+  }
+  return { fields, domVersion };
 }
 
 export async function fillFields(values: { fieldId: string; value: string }[]): Promise<{ results: FillResult[] }> {
-  return sendToTab<{ results: FillResult[] }>({ type: 'AF_FILL', values });
+  const { tabId, frames } = await activeTabWithFrames();
+  const byFrame = new Map<number, { fieldId: string; value: string }[]>();
+  for (const v of values) {
+    const [frameId, local] = split(v.fieldId);
+    const list = byFrame.get(frameId) ?? [];
+    list.push({ fieldId: local, value: v.value });
+    byFrame.set(frameId, list);
+  }
+
+  const results: FillResult[] = [];
+  await Promise.all(
+    [...byFrame].map(async ([frameId, vals]) => {
+      if (!frames.includes(frameId)) {
+        results.push(...vals.map((v) => ({ fieldId: v.fieldId, status: 'not-found' as const })));
+        return;
+      }
+      try {
+        const r = await sendToFrame<{ results: FillResult[] }>(tabId, frameId, { type: 'AF_FILL', values: vals });
+        results.push(...r.results.map((res) => ({ ...res, fieldId: `${prefix(frameId)}${res.fieldId}` })));
+      } catch {
+        results.push(...vals.map((v) => ({ fieldId: v.fieldId, status: 'not-found' as const })));
+      }
+    }),
+  );
+  return { results };
 }
 
 export async function currentPageInfo(): Promise<{ host: string; isAnalyzable: boolean }> {
