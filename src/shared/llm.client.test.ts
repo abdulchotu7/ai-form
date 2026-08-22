@@ -28,9 +28,18 @@ describe('suggestWithLlm', () => {
     expect(out.get('f1')?.source).toBe('llm');
   });
 
-  it('rejects malformed JSON with a clear error', async () => {
+  it('degrades gracefully on malformed JSON (returns empty, no throw)', async () => {
     vi.stubGlobal('fetch', mockFetch({ choices: [{ message: { content: 'sorry, I cannot' } }] }));
-    await expect(suggestWithLlm([field({ id: 'f1' })], profile, config)).rejects.toThrow(/malformed/);
+    const out = await suggestWithLlm([field({ id: 'f1' })], profile, config);
+    expect(out.size).toBe(0);
+  });
+
+  it('salvages valid suggestions from broken JSON', async () => {
+    const broken = 'Here you go:\n{"suggestions": [{"fieldId": "f1", "value": "42", "confidence": 0.8,'; // truncated
+    vi.stubGlobal('fetch', mockFetch({ choices: [{ message: { content:
+      broken + '\n{"fieldId":"f1","value":"42","confidence":0.8,"reason":"ok"}' } }] }));
+    const out = await suggestWithLlm([field({ id: 'f1' })], profile, config);
+    expect(out.get('f1')?.value).toBe('42');
   });
 
   it('drops hallucinated field ids', async () => {
@@ -65,9 +74,10 @@ describe('suggestWithLlm', () => {
     expect(JSON.parse(f.mock.calls[1][1].body).response_format).toBeUndefined();
   });
 
-  it('throws on HTTP errors after retry', async () => {
+  it('degrades gracefully on HTTP errors after retry (returns empty, no throw)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 500 })));
-    await expect(suggestWithLlm([field({ id: 'f1' })], profile, config)).rejects.toThrow(/HTTP 500/);
+    const out = await suggestWithLlm([field({ id: 'f1' })], profile, config);
+    expect(out.size).toBe(0);
   });
 
   it('returns empty without any network call when unconfigured', async () => {

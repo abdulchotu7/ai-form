@@ -1,4 +1,4 @@
-import type { FieldDescriptor, PageContext, Profile, Suggestion } from './types';
+import type { FieldDescriptor, LlmParsedResponse, PageContext, Profile, Suggestion } from './types';
 import { LlmResponseSchema } from './schema';
 import { isSensitive } from './match';
 
@@ -79,6 +79,10 @@ function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
+/** Fields per LLM call — small batches keep narrative JSON short enough that
+ *  small models don't truncate or mangle it. */
+const BATCH_SIZE = 3;
+
 export async function suggestWithLlm(
   fields: FieldDescriptor[],
   profile: Profile,
@@ -89,10 +93,30 @@ export async function suggestWithLlm(
   if (!config.baseUrl || !config.model || fields.length === 0) return out;
 
   const known = new Set(fields.map((f) => f.id));
+  // Batch independently: one malformed batch loses only its own fields.
+  for (let i = 0; i < fields.length; i += BATCH_SIZE) {
+    try {
+      const batch = await requestBatch(fields.slice(i, i + BATCH_SIZE), profile, config, pageContext, known);
+      for (const [k, v] of batch) out.set(k, v);
+    } catch {
+      // Skip this batch; deterministic matches and other batches still apply.
+    }
+  }
+  return out;
+}
+
+async function requestBatch(
+  fields: FieldDescriptor[],
+  profile: Profile,
+  config: LlmConfig,
+  pageContext: PageContext | undefined,
+  knownIds: Set<string>,
+): Promise<Map<string, Suggestion>> {
   for (let attempt = 0; attempt < 2; attempt++) {
     let body: Record<string, unknown> = {
       model: config.model,
       temperature: 0,
+      max_tokens: 2048,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: buildUserPrompt(fields, profile, pageContext) },
@@ -119,24 +143,35 @@ export async function suggestWithLlm(
     }
     const data = await res.json();
     const content: string = data?.choices?.[0]?.message?.content ?? '';
-    return finalize(content, known);
+    return finalize(content, knownIds);
   }
-  return out;
+  throw new Error('unreachable');
 }
 
 function finalize(content: string, knownIds: Set<string>): Map<string, Suggestion> {
   const out = new Map<string, Suggestion>();
-  let parsed: unknown;
+  let suggestions: LlmParsedResponse['suggestions'] | null = null;
   try {
-    parsed = extractJson(content);
+    const r = LlmResponseSchema.safeParse(extractJson(content));
+    if (r.success) suggestions = r.data.suggestions;
   } catch {
-    throw new Error('LLM returned malformed output (not valid JSON).');
+    // fall through to salvage
   }
-  const result = LlmResponseSchema.safeParse(parsed);
-  if (!result.success) {
-    throw new Error('LLM returned malformed output (schema validation failed).');
+  if (!suggestions) {
+    // Salvage: broken/truncated JSON — recover whatever well-formed
+    // suggestion objects exist instead of losing them all.
+    suggestions = [];
+    for (const m of content.matchAll(/\{[^{}]*"fieldId"[^{}]*\}/g)) {
+      try {
+        const r = LlmResponseSchema.safeParse({ suggestions: [JSON.parse(m[0])] });
+        if (r.success) suggestions.push(...r.data.suggestions);
+      } catch {
+        // skip unrecoverable fragment
+      }
+    }
   }
-  for (const s of result.data.suggestions) {
+  if (suggestions.length === 0) throw new Error('LLM returned malformed output.');
+  for (const s of suggestions) {
     if (!knownIds.has(s.fieldId)) continue; // reject hallucinated field ids
     const value = s.value?.trim() ? s.value.trim() : null;
     out.set(s.fieldId, {
