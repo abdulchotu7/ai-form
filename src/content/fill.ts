@@ -8,16 +8,26 @@ import { isSensitive } from '../shared/match';
  * never navigates, never submits.
  */
 
-/** Set value through the native prototype setter so React/Vue/Angular notice. */
+/**
+ * Set value through the native prototype setter so React/Vue/Angular notice,
+ * then fire the full typing sequence. Some validators (Google Forms) ignore
+ * bare input events or untrusted ones — focusing + keydown/input(InputEvent)/keyup
+ * clears most of them.
+ */
 function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   const proto =
     el instanceof HTMLTextAreaElement
       ? HTMLTextAreaElement.prototype
       : HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  el.focus();
   if (setter) setter.call(el, value);
   else el.value = value;
-  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'a' }));
+  // ponytail: InputEvent is still isTrusted:false — if a form still rejects
+  // fills, the upgrade path is chrome.debugger + CDP Input.insertText.
+  el.dispatchEvent(new InputEvent('input', { bubbles: true, data: value.slice(-1), inputType: 'insertText' }));
+  el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'a' }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
@@ -127,8 +137,12 @@ export function applyFill(target: FillTarget, rawValue: string, resumeFile?: Sto
     case 'textarea': {
       const el = target.elements[0] as HTMLTextAreaElement;
       if (el.disabled) return status('failed');
-      setNativeValue(el, value);
-      return status('filled');
+      try {
+        setNativeValue(el, value);
+      } catch {
+        return status('failed');
+      }
+      return el.value === value ? status('filled') : status('failed');
     }
     case 'select':
       return fillSelect(target.elements[0] as HTMLSelectElement, value) ? status('filled') : status('failed');
