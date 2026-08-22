@@ -25,6 +25,13 @@ export const StandardAnswerSchema = z.object({
   answer: str.default(''),
 });
 
+export const JobSearchSchema = z.object({
+  noticePeriod: str.default(''), // e.g. "30 days" / "Immediate"
+  currentCompensation: str.default(''),
+  expectedCompensation: str.default(''),
+  workAuthorization: str.default(''), // e.g. "Indian citizen — no sponsorship needed"
+});
+
 export const ProfileSchema = z.object({
   personal: z
     .object({
@@ -54,6 +61,7 @@ export const ProfileSchema = z.object({
     })
     .default({}),
   standardAnswers: z.array(StandardAnswerSchema).default([]),
+  jobSearch: JobSearchSchema.default({}),
   // Free-text source material the LLM mines for composed answers.
   documents: z
     .object({

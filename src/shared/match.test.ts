@@ -85,6 +85,24 @@ describe('deterministic matching', () => {
   });
 });
 
+describe('job search details', () => {
+  const prof = profile((p) => {
+    p.jobSearch.noticePeriod = '30 days';
+    p.jobSearch.currentCompensation = '12 LPA';
+    p.jobSearch.expectedCompensation = '18 LPA';
+    p.jobSearch.workAuthorization = 'Indian citizen, no sponsorship needed';
+  });
+  it.each([
+    ['Notice Period', '30 days'],
+    ['Current CTC', '12 LPA'],
+    ['What are your salary expectations?', '18 LPA'],
+    ['Are you legally authorized to work in this country?', 'Indian citizen, no sponsorship needed'],
+    ['Will you now or in the future require visa sponsorship?', 'Indian citizen, no sponsorship needed'],
+  ])('matches "%s"', (label, expected) => {
+    expect(deterministicMatch(field({ label }), prof)?.value).toBe(expected);
+  });
+});
+
 describe('semantic derivations', () => {
   it('derives years of experience from date ranges', () => {
     const p = profile((p) =>

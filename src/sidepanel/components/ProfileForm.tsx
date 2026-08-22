@@ -179,6 +179,17 @@ export function ProfileForm({ initial, onSave, resumeFile, onResumeFile }: Props
       </section>
 
       <section className="card">
+        <h2>Job search details</h2>
+        <p className="hint">Asked on almost every application — saved once, filled everywhere.</p>
+        <div className="grid-2">
+          <Field label="Notice period" value={p.jobSearch.noticePeriod} onChange={(v) => set((d) => void (d.jobSearch.noticePeriod = v))} placeholder="30 days / Immediate" />
+          <Field label="Work authorization" value={p.jobSearch.workAuthorization} onChange={(v) => set((d) => void (d.jobSearch.workAuthorization = v))} placeholder="Citizen / Visa status" />
+          <Field label="Current compensation" value={p.jobSearch.currentCompensation} onChange={(v) => set((d) => void (d.jobSearch.currentCompensation = v))} placeholder="e.g. 12 LPA" />
+          <Field label="Expected compensation" value={p.jobSearch.expectedCompensation} onChange={(v) => set((d) => void (d.jobSearch.expectedCompensation = v))} placeholder="e.g. 18 LPA" />
+        </div>
+      </section>
+
+      <section className="card">
         <h2>Standard answers</h2>
         <p className="hint">Reusable answers for questions you see often, e.g. "Why do you want to work here?"</p>
         {p.standardAnswers.length === 0 && <p className="empty">No saved answers yet.</p>}

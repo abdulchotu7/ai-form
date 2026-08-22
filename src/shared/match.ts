@@ -190,6 +190,34 @@ const RULES: AliasRule[] = [
     },
   },
   {
+    patterns: [/notice period/, /\bnotice\b/],
+    resolve: (p) => val(p.jobSearch.noticePeriod, 'jobSearch.noticePeriod'),
+  },
+  {
+    // Must run before generic "expected compensation" ("current expected" is rare, order safe).
+    patterns: [/current (compensation|salary|ctc)/, /present (compensation|salary|ctc)/],
+    resolve: (p) => val(p.jobSearch.currentCompensation, 'jobSearch.currentCompensation'),
+  },
+  {
+    patterns: [
+      /expected (compensation|salary|ctc|pay)/,
+      /(salary|compensation) expectation/,
+      /desired (salary|pay|compensation)/,
+    ],
+    resolve: (p) => val(p.jobSearch.expectedCompensation, 'jobSearch.expectedCompensation'),
+  },
+  {
+    patterns: [
+      /work authorization/,
+      /authorized to work/,
+      /legally authorized/,
+      /right to work/,
+      /visa (status|type|sponsorship)/,
+      /sponsorship (required|required\?|needed)/,
+    ],
+    resolve: (p) => val(p.jobSearch.workAuthorization, 'jobSearch.workAuthorization'),
+  },
+  {
     patterns: [/skills?/, /tech(nical)? stack/, /technologies/, /competencies/],
     resolve: (p) => (p.skills.length ? { value: p.skills.join(', '), source: 'profile', reason: 'Skills list from profile.' } : null),
   },
