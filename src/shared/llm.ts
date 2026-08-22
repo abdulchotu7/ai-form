@@ -93,14 +93,17 @@ export async function suggestWithLlm(
   if (!config.baseUrl || !config.model || fields.length === 0) return out;
 
   const known = new Set(fields.map((f) => f.id));
-  // Batch independently: one malformed batch loses only its own fields.
+  // Batches run in parallel: one malformed batch loses only its own fields.
+  const chunks: Promise<Map<string, Suggestion>>[] = [];
   for (let i = 0; i < fields.length; i += BATCH_SIZE) {
-    try {
-      const batch = await requestBatch(fields.slice(i, i + BATCH_SIZE), profile, config, pageContext, known);
-      for (const [k, v] of batch) out.set(k, v);
-    } catch {
-      // Skip this batch; deterministic matches and other batches still apply.
-    }
+    chunks.push(
+      requestBatch(fields.slice(i, i + BATCH_SIZE), profile, config, pageContext, known).catch(
+        () => new Map<string, Suggestion>(),
+      ),
+    );
+  }
+  for (const batch of await Promise.all(chunks)) {
+    for (const [k, v] of batch) out.set(k, v);
   }
   return out;
 }
@@ -119,7 +122,18 @@ async function requestBatch(
       max_tokens: 2048,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: buildUserPrompt(fields, profile, pageContext) },
+        // Documents are big (8k chars each) — only ship them to batches that
+        // actually need narrative context (textareas).
+        {
+          role: 'user',
+          content: buildUserPrompt(
+            fields,
+            fields.some((f) => f.type === 'textarea')
+              ? profile
+              : { ...profile, documents: { resume: '', portfolio: '' } },
+            pageContext,
+          ),
+        },
       ],
     };
 
@@ -138,7 +152,12 @@ async function requestBatch(
       signal: AbortSignal.timeout(90_000),
     });
     if (!res.ok) {
-      if (attempt === 0 && res.status === 400) continue; // retry without response_format
+      // 400: some servers reject response_format. 429/5xx: free-tier rate limits
+      // and cold queues — worth one patient retry instead of dropping the batch.
+      if (attempt === 0 && (res.status === 400 || res.status === 429 || res.status >= 500)) {
+        if (res.status !== 400) await new Promise((r) => setTimeout(r, 2000));
+        continue;
+      }
       throw new Error(`LLM request failed: HTTP ${res.status}`);
     }
     const data = await res.json();
