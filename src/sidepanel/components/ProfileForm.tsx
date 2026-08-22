@@ -251,6 +251,41 @@ export function ProfileForm({ initial, onSave, resumeFile, onResumeFile }: Props
       <div className="save-bar">
         <button className="btn primary" onClick={save}>Save profile</button>
         {saved && <span className="save-ok">Saved ✓</span>}
+        <span style={{ flex: 1 }} />
+        <button
+          className="btn-link"
+          onClick={() => {
+            const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'ai-form-profile.json';
+            a.click();
+            URL.revokeObjectURL(a.href);
+          }}
+        >
+          Export
+        </button>
+        <label className="btn-link">
+          Import
+          <input
+            type="file"
+            accept=".json,application/json"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              void f.text().then((t) => {
+                try {
+                  setP({ ...emptyProfile(), ...JSON.parse(t) });
+                  setSaved(false);
+                } catch {
+                  alert('Not a valid profile export file.');
+                }
+              });
+              e.target.value = '';
+            }}
+          />
+        </label>
       </div>
     </div>
   );
