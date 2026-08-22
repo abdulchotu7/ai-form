@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { DetectResponse, FieldDescriptor, FillResult, Profile, Suggestion } from '../shared/types';
+import type { DetectResponse, FieldDescriptor, FillResult, Profile, StoredFile, Suggestion } from '../shared/types';
 import { isSensitive, deterministicMatch } from '../shared/match';
 import { suggestWithLlm } from '../shared/llm';
-import { detectFields, fillFields, loadProfile, loadSettings, saveProfile, saveSettings, currentPageInfo } from './api';
+import { detectFields, fillFields, loadProfile, loadResumeFile, loadSettings, saveProfile, saveResumeFile, saveSettings, currentPageInfo } from './api';
 import { ProfileForm } from './components/ProfileForm';
 import { AnalysisView } from './components/AnalysisView';
 import { SettingsView } from './components/SettingsView';
@@ -33,10 +33,12 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [llmConfigured, setLlmConfigured] = useState(false);
+  const [resumeFile, setResumeFile] = useState<StoredFile | null>(null);
 
   useEffect(() => {
     void (async () => {
       setProfile(await loadProfile());
+      setResumeFile(await loadResumeFile());
       setLlmConfigured(Boolean((await loadSettings()).llmBaseUrl && (await loadSettings()).llmModel));
     })();
     void currentPageInfo().then(({ host, isAnalyzable }) => {
@@ -48,6 +50,11 @@ export default function App() {
   const handleSaveProfile = useCallback(async (p: Profile) => {
     await saveProfile(p);
     setProfile(p);
+  }, []);
+
+  const handleResumeFile = useCallback(async (f: StoredFile | null) => {
+    await saveResumeFile(f);
+    setResumeFile(f);
   }, []);
 
   const analyze = useCallback(async () => {
@@ -75,6 +82,26 @@ export default function App() {
 
       for (const field of detected.fields) {
         const sensitive = isSensitive(field);
+        if (field.type === 'file') {
+          // Resume auto-attach: only fields that clearly ask for a CV/resume.
+          const looksLikeResume = /resume|\bcv\b|curriculum/i.test(`${field.label} ${field.context} ${field.name}`);
+          analyzed.push({
+            field,
+            sensitive: false,
+            included: looksLikeResume && Boolean(resumeFile),
+            suggestion: {
+              fieldId: field.id,
+              value: looksLikeResume && resumeFile ? resumeFile.name : null,
+              confidence: looksLikeResume && resumeFile ? 0.9 : 0,
+              source: 'profile',
+              reason:
+                looksLikeResume && resumeFile
+                  ? `Attach saved resume file (${resumeFile!.name}).`
+                  : 'File upload — no matching saved file. Attach manually.',
+            },
+          });
+          continue;
+        }
         if (sensitive) {
           analyzed.push({
             field,
@@ -157,7 +184,8 @@ export default function App() {
       const values = analysis.fields
         .filter((f) => f.included && f.suggestion.value)
         .map((f) => ({ fieldId: f.field.id, value: f.suggestion.value! }));
-      const { results } = await fillFields(values);
+      const attachResume = analysis.fields.some((f) => f.included && f.field.type === 'file');
+      const { results } = await fillFields(values, attachResume ? resumeFile ?? undefined : undefined);
       const byId = new Map(results.map((r) => [r.fieldId, r.status]));
       setAnalysis((prev) =>
         prev ? { ...prev, fields: prev.fields.map((f) => ({ ...f, fillStatus: byId.get(f.field.id) })) } : prev,
@@ -202,7 +230,12 @@ export default function App() {
           />
         )}
         {tab === 'profile' && profile && (
-          <ProfileForm initial={profile} onSave={(p) => void handleSaveProfile(p)} />
+          <ProfileForm
+            initial={profile}
+            onSave={(p) => void handleSaveProfile(p)}
+            resumeFile={resumeFile}
+            onResumeFile={(f) => void handleResumeFile(f)}
+          />
         )}
         {tab === 'settings' && (
           <SettingsView

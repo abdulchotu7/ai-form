@@ -55,7 +55,7 @@ if (document.documentElement.dataset.afFormAssistant !== '1') {
       const results = req.values.map(({ fieldId, value }) => {
         const target = targets.get(fieldId);
         if (!target) return { fieldId, status: 'not-found' as const };
-        return applyFill(target, value);
+        return applyFill(target, value, req.resumeFile);
       });
       sendResponse({ results });
       return false;

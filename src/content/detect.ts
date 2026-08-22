@@ -7,7 +7,7 @@ import type { FieldDescriptor, FieldType } from '../shared/types';
  */
 
 export interface FillTarget {
-  kind: 'input' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'checkbox-group';
+  kind: 'input' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'checkbox-group' | 'file';
   elements: (HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement)[];
   descriptor: FieldDescriptor;
 }
@@ -224,7 +224,7 @@ export function scanForm(root: Document): ScanResult {
         .filter((t) => t && !/^(-+|select|choose|please select|-- )/i.test(t));
     } else if (el instanceof HTMLInputElement) {
       type = inputType(el);
-      kind = el.type === 'checkbox' ? 'checkbox' : 'input';
+      kind = el.type === 'checkbox' ? 'checkbox' : el.type === 'file' ? 'file' : 'input';
     } else {
       continue;
     }

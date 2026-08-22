@@ -54,10 +54,17 @@ export interface FillResult {
   status: FillStatus;
 }
 
+/** A user-provided binary attachment (resume), base64-encoded for storage/messages. */
+export interface StoredFile {
+  name: string;
+  type: string;
+  data: string; // base64
+}
+
 /** Messages side panel -> content script. */
 export type ContentRequest =
   | { type: 'AF_DETECT' }
-  | { type: 'AF_FILL'; values: { fieldId: string; value: string }[] };
+  | { type: 'AF_FILL'; values: { fieldId: string; value: string }[]; resumeFile?: StoredFile };
 
 export interface DetectResponse {
   fields: FieldDescriptor[];

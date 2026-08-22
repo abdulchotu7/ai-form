@@ -1,4 +1,4 @@
-import type { FillResult, FillStatus } from '../shared/types';
+import type { FillResult, FillStatus, StoredFile } from '../shared/types';
 import type { FillTarget } from './detect';
 import { isSensitive } from '../shared/match';
 
@@ -73,9 +73,34 @@ function fillCheckbox(box: HTMLInputElement, value: string): boolean {
   return true;
 }
 
-export function applyFill(target: FillTarget, rawValue: string): FillResult {
+/**
+ * Attach a stored file to <input type=file>. Only ever called with a file the
+ * user explicitly saved and approved in the review UI — never for anything else.
+ */
+function fillFile(el: HTMLInputElement, file: StoredFile): boolean {
+  if (el.disabled) return false;
+  try {
+    const bytes = Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0));
+    const dt = new DataTransfer();
+    dt.items.add(new File([bytes], file.name, { type: file.type }));
+    el.files = dt.files;
+  } catch {
+    return false;
+  }
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  return el.files?.length === 1;
+}
+
+export function applyFill(target: FillTarget, rawValue: string, resumeFile?: StoredFile): FillResult {
   const status = (s: FillStatus): FillResult => ({ fieldId: target.descriptor.id, status: s });
 
+  // File inputs are handled before the sensitive gate: they are only filled
+  // when the user's own saved resume is explicitly passed in.
+  if (target.kind === 'file') {
+    if (!resumeFile || !target.elements[0]) return status('skipped-sensitive');
+    return fillFile(target.elements[0] as HTMLInputElement, resumeFile) ? status('filled') : status('failed');
+  }
   if (isSensitive(target.descriptor)) return status('skipped-sensitive');
   if (!target.elements[0]) return status('not-found');
   const value = rawValue;

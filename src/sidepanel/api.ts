@@ -1,4 +1,4 @@
-import type { ContentRequest, DetectResponse, FillResult, Profile } from '../shared/types';
+import type { ContentRequest, DetectResponse, FillResult, Profile, StoredFile } from '../shared/types';
 import { emptyProfile, emptySettings, ProfileSchema, SettingsSchema } from '../shared/schema';
 
 /** chrome.* wrappers — the only place the side panel touches extension APIs. */
@@ -25,6 +25,16 @@ export async function loadSettings() {
 
 export async function saveSettings(settings: ReturnType<typeof emptySettings>): Promise<void> {
   await chrome.storage.local.set({ settings });
+}
+
+/** The user's resume file for auto-attach — stored separately from the profile (it's binary and big). */
+export async function loadResumeFile(): Promise<StoredFile | null> {
+  return (await storageGet<StoredFile>('resumeFile')) ?? null;
+}
+
+export async function saveResumeFile(file: StoredFile | null): Promise<void> {
+  if (file) await chrome.storage.local.set({ resumeFile: file });
+  else await chrome.storage.local.remove('resumeFile');
 }
 
 async function activeTab(): Promise<chrome.tabs.Tab> {
@@ -95,7 +105,10 @@ export async function detectFields(): Promise<DetectResponse> {
   return { fields, domVersion };
 }
 
-export async function fillFields(values: { fieldId: string; value: string }[]): Promise<{ results: FillResult[] }> {
+export async function fillFields(
+  values: { fieldId: string; value: string }[],
+  resumeFile?: StoredFile,
+): Promise<{ results: FillResult[] }> {
   const { tabId, frames } = await activeTabWithFrames();
   const byFrame = new Map<number, { fieldId: string; value: string }[]>();
   for (const v of values) {
@@ -113,7 +126,7 @@ export async function fillFields(values: { fieldId: string; value: string }[]): 
         return;
       }
       try {
-        const r = await sendToFrame<{ results: FillResult[] }>(tabId, frameId, { type: 'AF_FILL', values: vals });
+        const r = await sendToFrame<{ results: FillResult[] }>(tabId, frameId, { type: 'AF_FILL', values: vals, resumeFile });
         results.push(...r.results.map((res) => ({ ...res, fieldId: `${prefix(frameId)}${res.fieldId}` })));
       } catch {
         results.push(...vals.map((v) => ({ fieldId: v.fieldId, status: 'not-found' as const })));
