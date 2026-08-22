@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FieldDescriptor, Profile } from './types';
-import { deterministicMatch, deriveYearsOfExperience, isSensitive, matchOption } from './match';
+import { deterministicMatch, deriveYearsOfExperience, isSensitive, matchOption, plausible } from './match';
 import { emptyProfile } from './schema';
 
 function field(partial: Partial<FieldDescriptor>): FieldDescriptor {
@@ -179,5 +179,22 @@ describe('option matching', () => {
   });
   it('returns null on no plausible match', () => {
     expect(matchOption('Quantum Physics', ['Yes', 'No'])).toBeNull();
+  });
+});
+
+describe('plausibility gate', () => {
+  it('never fills a pincode field with a city name', () => {
+    const p = profile((p) => {
+      p.personal.address = 'Vijayawada';
+      p.personal.pincode = '520001';
+    });
+    expect(deterministicMatch(field({ label: 'Pincode' }), p)?.value).toBe('520001');
+    // LLM-side guard: implausible value dropped even with high confidence
+    expect(plausible(field({ label: 'Pincode' }), 'Vijayawada')).toBe(false);
+    expect(plausible(field({ label: 'Pincode' }), '520001')).toBe(true);
+  });
+  it('rejects non-numeric junk for age fields', () => {
+    expect(plausible(field({ label: 'Age' }), 'twenty')).toBe(false);
+    expect(plausible(field({ label: 'Age' }), '24')).toBe(true);
   });
 });

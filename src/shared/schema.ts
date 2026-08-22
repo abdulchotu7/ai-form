@@ -42,6 +42,7 @@ export const ProfileSchema = z.object({
       gender: str.default(''),
       country: str.default(''),
       address: str.default(''),
+      pincode: str.default(''),
     })
     .default({}),
   contact: z

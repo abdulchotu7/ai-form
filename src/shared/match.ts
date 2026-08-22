@@ -224,6 +224,15 @@ const RULES: AliasRule[] = [
     resolve: (p) => val(p.personal.gender, 'personal.gender'),
   },
   {
+    // Must run before the address rule — a "Address Pincode" label matches both.
+    patterns: [/\bpin ?code\b/, /\bzip\b/, /postal code/],
+    resolve: (p) => {
+      const v = p.personal.pincode.trim();
+      if (!/^\d{4,6}(-\d{4})?$/.test(v)) return null; // never guess a pincode
+      return { value: v, source: 'profile', reason: 'Pincode from profile.' };
+    },
+  },
+  {
     patterns: [/\baddress\b/, /street address/, /mailing address/, /current location/, /where (do|are) you (live|located)/],
     resolve: (p) => val(p.personal.address, 'personal.address'),
   },
@@ -240,6 +249,17 @@ const RULES: AliasRule[] = [
 function val(v: string, path: string): { value: string; source: Suggestion['source']; reason: string } | null {
   if (!v.trim()) return null;
   return { value: v.trim(), source: 'profile', reason: `Matched from profile (${path}).` };
+}
+
+/**
+ * Sanity gate: a value that contradicts what the field asks for is worse than
+ * no suggestion. Runs on BOTH deterministic and LLM suggestions.
+ */
+export function plausible(field: FieldDescriptor, value: string): boolean {
+  const l = `${field.label} ${field.name} ${field.placeholder}`.toLowerCase();
+  if (/pin ?code|\bzip\b|postal/.test(l) && !/^\d{4,6}(-\d{4})?$/.test(value.trim())) return false;
+  if (/\bage\b/.test(l) && !/^\d{1,3}$/.test(value.trim())) return false;
+  return true;
 }
 
 /* ---------------- Main deterministic matcher ---------------- */
@@ -259,6 +279,7 @@ export function deterministicMatch(field: FieldDescriptor, profile: Profile): Su
     const finalValue =
       field.options.length > 0 ? matchOption(r.value, field.options) : r.value;
     if (!finalValue) return null;
+    if (!plausible(field, finalValue)) return null;
     return {
       fieldId: field.id,
       value: finalValue,

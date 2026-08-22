@@ -92,7 +92,8 @@ export function ProfileForm({ initial, onSave, resumeFile, onResumeFile }: Props
           <Field label="Gender" value={p.personal.gender} onChange={(v) => set((d) => void (d.personal.gender = v))} placeholder="Male / Female / Other" />
           <Field label="Country" value={p.personal.country} onChange={(v) => set((d) => void (d.personal.country = v))} placeholder="India" />
         </div>
-        <Field label="Address" value={p.personal.address} onChange={(v) => set((d) => void (d.personal.address = v))} placeholder="Street, city, state, PIN" />
+        <Field label="Address" value={p.personal.address} onChange={(v) => set((d) => void (d.personal.address = v))} placeholder="Street, city, state" />
+        <Field label="Pincode" value={p.personal.pincode} onChange={(v) => set((d) => void (d.personal.pincode = v))} placeholder="520001" />
       </section>
 
       <section className="card">

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { DetectResponse, FieldDescriptor, FillResult, Profile, StoredFile, Suggestion } from '../shared/types';
-import { isSensitive, deterministicMatch } from '../shared/match';
+import { isSensitive, deterministicMatch, plausible } from '../shared/match';
 import { suggestWithLlm } from '../shared/llm';
 import { detectFields, fillFields, loadProfile, loadResumeFile, loadSettings, saveProfile, saveResumeFile, saveSettings, currentPageInfo } from './api';
 import { ProfileForm } from './components/ProfileForm';
@@ -140,8 +140,10 @@ export default function App() {
             );
             for (const a of analyzed) {
               const s = llmResult.suggestions.get(a.field.id);
-              // Only fill gaps: deterministic matches always win.
+              // Only fill gaps: deterministic matches always win. Implausible
+              // answers (city in a pincode field etc.) are dropped, not filled.
               if (s && !a.sensitive && a.suggestion.source === 'unresolved') {
+                if (s.value !== null && !plausible(a.field, s.value)) continue;
                 a.suggestion = s;
                 a.included = s.value !== null && s.confidence >= 0.7;
               }
