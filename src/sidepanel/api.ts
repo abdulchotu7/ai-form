@@ -135,7 +135,63 @@ export async function fillFields(
       }
     }),
   );
+
+  // CDP refill: fields the page refused get retyped as REAL trusted keystrokes
+  // via chrome.debugger — the only thing frameworks that filter synthetic
+  // events (Phenom, some Google forms) will accept. Shows Chrome's debugging
+  // banner for a moment; only runs for fields that failed the normal path.
+  const failed = results.filter((r) => r.status === 'failed');
+  if (failed.length > 0) {
+    const refilled = await cdpRefill(tabId, failed, values).catch(() => [] as FillResult[]);
+    for (const r of refilled) {
+      const i = results.findIndex((x) => x.fieldId === r.fieldId);
+      if (i >= 0) results[i] = r;
+    }
+  }
   return { results };
+}
+
+/** Re-type failed fields as trusted input, then re-verify through the normal path. */
+async function cdpRefill(
+  tabId: number,
+  failed: FillResult[],
+  values: { fieldId: string; value: string }[],
+): Promise<FillResult[]> {
+  const debuggee = { tabId };
+  await chrome.debugger.attach(debuggee, '1.3');
+  try {
+    for (const r of failed) {
+      const [frameId, local] = split(r.fieldId);
+      const v = values.find((x) => x.fieldId === r.fieldId)?.value;
+      if (!v) continue;
+      await sendToFrame(tabId, frameId, { type: 'AF_FOCUS', fieldId: local, clear: true });
+      await chrome.debugger.sendCommand(debuggee, 'Input.insertText', { text: v });
+    }
+  } finally {
+    await chrome.debugger.detach(debuggee).catch(() => {});
+  }
+  // Re-run the normal fill on just the failed fields — it re-verifies and
+  // reports honest status now that the value arrived as trusted input.
+  const redo = new Map<number, { fieldId: string; value: string }[]>();
+  const out: FillResult[] = [];
+  for (const r of failed) {
+    const [frameId, local] = split(r.fieldId);
+    const v = values.find((x) => x.fieldId === r.fieldId)!.value;
+    const list = redo.get(frameId) ?? [];
+    list.push({ fieldId: local, value: v });
+    redo.set(frameId, list);
+  }
+  await Promise.all(
+    [...redo].map(async ([frameId, vals]) => {
+      try {
+        const r = await sendToFrame<{ results: FillResult[] }>(tabId, frameId, { type: 'AF_FILL', values: vals });
+        out.push(...r.results.map((res) => ({ ...res, fieldId: `${prefix(frameId)}${res.fieldId}` })));
+      } catch {
+        out.push(...vals.map((v) => ({ fieldId: v.fieldId, status: 'failed' as const })));
+      }
+    }),
+  );
+  return out;
 }
 
 export async function currentPageInfo(): Promise<{ host: string; isAnalyzable: boolean }> {
