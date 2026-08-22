@@ -1,4 +1,4 @@
-import type { FieldDescriptor, Profile, Suggestion } from './types';
+import type { FieldDescriptor, PageContext, Profile, Suggestion } from './types';
 import { LlmResponseSchema } from './schema';
 import { isSensitive } from './match';
 
@@ -21,6 +21,9 @@ const SYSTEM_PROMPT = `You are a form-filling assistant. You receive:
 
 Rules:
 - Use ONLY the provided context as your source of facts. NEVER invent, guess, or fabricate information.
+- "pageInfo" describes the page the form is on (often a job posting). You MAY reference it when a
+  question is about the specific role or company (e.g. "Why do you want to work here?"), combining it
+  with the user's documents — but every claim about the company must come from pageInfo itself.
 - "documents.resume" and "documents.portfolio" contain the user's full resume and portfolio text —
   mine them for projects, metrics, dates, and skills when composing answers.
 - You MAY compose and synthesize answers from the context: summarize work experience into a professional
@@ -38,7 +41,7 @@ Respond with JSON only, matching exactly:
 {"suggestions":[{"fieldId":"<id>","value":<string|null>,"confidence":<0..1>,"reason":"<string>"}]}
 Include one entry per field, using the exact fieldId values given.`;
 
-export function buildUserPrompt(fields: FieldDescriptor[], profile: Profile): string {
+export function buildUserPrompt(fields: FieldDescriptor[], profile: Profile, pageContext?: PageContext): string {
   const safeFields = fields.filter((f) => !isSensitive(f)).map((f) => ({
     fieldId: f.id,
     type: f.type,
@@ -57,7 +60,11 @@ export function buildUserPrompt(fields: FieldDescriptor[], profile: Profile): st
       portfolio: profile.documents?.portfolio?.slice(0, CAP) ?? '',
     },
   };
-  return JSON.stringify({ fields: safeFields, context }, null, 1);
+  return JSON.stringify({
+    ...(pageContext?.title || pageContext?.description ? { pageInfo: pageContext } : {}),
+    fields: safeFields,
+    context,
+  }, null, 1);
 }
 
 /** Strip markdown fences some models wrap around JSON. */
@@ -76,6 +83,7 @@ export async function suggestWithLlm(
   fields: FieldDescriptor[],
   profile: Profile,
   config: LlmConfig,
+  pageContext?: PageContext,
 ): Promise<Map<string, Suggestion>> {
   const out = new Map<string, Suggestion>();
   if (!config.baseUrl || !config.model || fields.length === 0) return out;
@@ -87,7 +95,7 @@ export async function suggestWithLlm(
       temperature: 0,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: buildUserPrompt(fields, profile) },
+        { role: 'user', content: buildUserPrompt(fields, profile, pageContext) },
       ],
     };
 

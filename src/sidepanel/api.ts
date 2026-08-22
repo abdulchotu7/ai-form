@@ -97,12 +97,14 @@ export async function detectFields(): Promise<DetectResponse> {
   );
   const fields = [];
   let domVersion = 0;
+  let pageContext = { title: '', description: '' };
   for (const r of responses) {
     if (!r) continue;
     domVersion = Math.max(domVersion, r.res.domVersion);
+    if (r.res.pageContext?.title || r.res.pageContext?.description) pageContext = r.res.pageContext;
     for (const f of r.res.fields) fields.push({ ...f, id: `${prefix(r.frameId)}${f.id}` });
   }
-  return { fields, domVersion };
+  return { fields, domVersion, pageContext };
 }
 
 export async function fillFields(

@@ -66,10 +66,17 @@ export type ContentRequest =
   | { type: 'AF_DETECT' }
   | { type: 'AF_FILL'; values: { fieldId: string; value: string }[]; resumeFile?: StoredFile };
 
+export interface PageContext {
+  title: string;
+  description: string;
+}
+
 export interface DetectResponse {
   fields: FieldDescriptor[];
   /** Monotonic counter incremented when the page DOM mutates after last scan. */
   domVersion: number;
+  /** Page title + meta description — grounds narrative answers in the actual job posting. */
+  pageContext: PageContext;
 }
 
 export function confidenceBand(c: number): ConfidenceBand {

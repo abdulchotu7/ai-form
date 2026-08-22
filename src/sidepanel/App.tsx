@@ -135,6 +135,7 @@ export default function App() {
               ambiguous,
               profile,
               { baseUrl: settings.llmBaseUrl, apiKey: settings.llmApiKey, model: settings.llmModel },
+              detected.pageContext,
             );
             for (const a of analyzed) {
               const s = llm.get(a.field.id);
@@ -166,7 +167,7 @@ export default function App() {
       setError(e instanceof Error ? e.message : String(e));
       setPhase('idle');
     }
-  }, [profile]);
+  }, [profile, resumeFile]);
 
   const updateField = useCallback((fieldId: string, patch: Partial<AnalyzedField>) => {
     setAnalysis((prev) =>

@@ -44,7 +44,17 @@ if (document.documentElement.dataset.afFormAssistant !== '1') {
     if (req?.type === 'AF_DETECT') {
       // Always scan live DOM — analysis is on-demand, never periodic.
       const { fields } = scanForm(document);
-      const res: DetectResponse = { fields, domVersion: lastDomVersion };
+      const res: DetectResponse = {
+        fields,
+        domVersion: lastDomVersion,
+        pageContext: {
+          title: document.title.slice(0, 200),
+          description:
+            document.querySelector('meta[property="og:description"]')?.getAttribute('content')?.trim() ??
+            document.querySelector('meta[name="description"]')?.getAttribute('content')?.trim() ??
+            '',
+        },
+      };
       sendResponse(res);
       return false;
     }
