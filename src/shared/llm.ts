@@ -82,6 +82,26 @@ function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
+/** Live model list from any OpenAI-compatible endpoint (GET /models). */
+export async function fetchAvailableModels(baseUrl: string, apiKey?: string): Promise<string[]> {
+  try {
+    const res = await fetch(`${normalizeBaseUrl(baseUrl)}/models`, {
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return [];
+    const data: unknown = await res.json();
+    const ids = Array.isArray((data as { data?: unknown })?.data)
+      ? ((data as { data: { id?: unknown }[] }).data)
+        .map((m) => String(m?.id ?? ''))
+        .filter(Boolean)
+      : [];
+    return [...new Set(ids)].sort();
+  } catch {
+    return [];
+  }
+}
+
 /** Fields per LLM call, split by expected ANSWER size — the constraint is the
  *  output budget (max_tokens 2048), not input. Short answers ("Yes", "5") cost
  *  ~20 tokens each, so a dozen fit safely in one request; narrative answers
@@ -133,6 +153,8 @@ export interface SuggestResult {
   suggestions: Map<string, Suggestion>;
   /** Per-batch failure reasons, in order. Empty when every batch succeeded. */
   errors: string[];
+  /** Set when rate limits forced some answers onto a spare model. */
+  fallbackNotice?: string;
 }
 
 export async function suggestWithLlm(
@@ -152,8 +174,10 @@ export async function suggestWithLlm(
   // still triggers the patient retry inside requestBatch either way.
   const chunks = splitBatches(fields);
   const paced = needsPacing(config.baseUrl);
-  const runChunk = (chunk: FieldDescriptor[], index: number): Promise<void> =>
-    requestBatch(chunk, profile, config, pageContext, known).then((result) => {
+  let rotated = 0;
+  const runChunk = (chunk: FieldDescriptor[]): Promise<void> =>
+    requestBatch(chunk, profile, config, pageContext, known).then(({ suggestions: result, usedSpare }) => {
+      if (usedSpare) rotated++;
       for (const [k, v] of result) out.suggestions.set(k, v);
     }).catch((e: unknown) => {
       const first = fields.indexOf(chunk[0]) + 1;
@@ -163,10 +187,14 @@ export async function suggestWithLlm(
   if (paced) {
     for (let i = 0; i < chunks.length; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, BATCH_GAP_MS));
-      await runChunk(chunks[i], i);
+      await runChunk(chunks[i]);
     }
   } else {
     await Promise.all(chunks.map(runChunk));
+  }
+  if (rotated > 0) {
+    const chain = modelChain(config.model);
+    out.fallbackNotice = `Rate limits hit on ${chain[0]} — ${rotated} request${rotated > 1 ? 's' : ''} used ${chain[1] ?? 'a spare model'} instead. You can switch models any time in Settings.`;
   }
   return out;
 }
@@ -182,12 +210,12 @@ async function requestBatch(
   config: LlmConfig,
   pageContext: PageContext | undefined,
   knownIds: Set<string>,
-): Promise<Map<string, Suggestion>> {
+): Promise<{ suggestions: Map<string, Suggestion>; usedSpare: boolean }> {
   const chain = modelChain(config.model);
   let lastError: Error | null = null;
-  for (const modelName of chain) {
+  for (let i = 0; i < chain.length; i++) {
     try {
-      return await requestBatchWithModel(fields, profile, config, pageContext, knownIds, modelName);
+      return { suggestions: await requestBatchWithModel(fields, profile, config, pageContext, knownIds, chain[i]), usedSpare: i > 0 };
     } catch (e) {
       lastError = e instanceof Error ? e : new Error(String(e));
     }

@@ -144,6 +144,8 @@ export default function App() {
                   ? `AI suggestions failed — check your endpoint/model in Settings. (${llmResult.errors[0]})`
                   : `Some AI answers failed and were left blank. (${llmResult.errors[0]})`,
               );
+            } else if (llmResult.fallbackNotice) {
+              setNotice(llmResult.fallbackNotice);
             }
           } catch (e) {
             setNotice(e instanceof Error ? e.message : 'AI suggestions failed; showing deterministic matches only.');

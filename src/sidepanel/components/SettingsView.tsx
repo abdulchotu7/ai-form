@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Settings } from '../../shared/schema';
+import { fetchAvailableModels } from '../../shared/llm';
 
 interface Props {
   onLoad: () => Promise<Settings>;
@@ -9,6 +10,8 @@ interface Props {
 export function SettingsView({ onLoad, onSave }: Props) {
   const [s, setS] = useState<Settings | null>(null);
   const [saved, setSaved] = useState(false);
+  const [models, setModels] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
 
   useEffect(() => {
     void onLoad().then(setS);
@@ -20,6 +23,23 @@ export function SettingsView({ onLoad, onSave }: Props) {
     await onSave(s);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const loadModels = async () => {
+    if (!s.llmBaseUrl.trim()) return;
+    setLoadingModels(true);
+    try {
+      // The saved key is used when the field is untouched (type=password keeps
+      // it masked but present); otherwise whatever the user just typed.
+      const key = s.llmApiKey || undefined;
+      const list = await fetchAvailableModels(s.llmBaseUrl, key);
+      setModels(list);
+      if (list.length > 0 && !list.includes(s.llmModel.trim()) && !s.llmModel.includes(',')) {
+        // Keep the current model selected even if not in list — user may know better.
+      }
+    } finally {
+      setLoadingModels(false);
+    }
   };
 
   return (
@@ -40,12 +60,32 @@ export function SettingsView({ onLoad, onSave }: Props) {
         </label>
         <label className="field">
           <span className="field-label">Model</span>
-          <input
-            value={s.llmModel}
-            onChange={(e) => { setS({ ...s, llmModel: e.target.value }); setSaved(false); }}
-            placeholder="gpt-4o-mini · llama3.1 · mistral…"
-          />
+          {models.length > 0 ? (
+            <>
+              <select
+                value={models.includes(s.llmModel.trim()) || s.llmModel.includes(',') ? s.llmModel : ''}
+                onChange={(e) => { setS({ ...s, llmModel: e.target.value }); setSaved(false); }}
+              >
+                {!models.includes(s.llmModel.trim()) && !s.llmModel.includes(',') && (
+                  <option value="">— pick a model —</option>
+                )}
+                {models.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+              <span className="hint">{models.length} models from your endpoint.</span>
+            </>
+          ) : (
+            <input
+              value={s.llmModel}
+              onChange={(e) => { setS({ ...s, llmModel: e.target.value }); setSaved(false); }}
+              placeholder="gpt-4o-mini · llama3.1 · mistral…"
+            />
+          )}
         </label>
+        <button className="btn-link" onClick={() => void loadModels()} disabled={loadingModels}>
+          {loadingModels ? 'Fetching models…' : models.length > 0 ? '↻ Refresh model list' : 'Fetch available models'}
+        </button>
         <label className="field">
           <span className="field-label">API key (optional for local servers)</span>
           <input

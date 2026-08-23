@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { suggestWithLlm, BATCH_GAP_MS, RETRY_BACKOFF_MS } from './llm';
+import { suggestWithLlm, fetchAvailableModels, BATCH_GAP_MS, RETRY_BACKOFF_MS } from './llm';
 import type { FieldDescriptor, Profile } from './types';
 import { emptyProfile } from './schema';
 
@@ -150,6 +150,38 @@ describe('suggestWithLlm', () => {
       vi.unstubAllGlobals();
       RETRY_BACKOFF_MS.value = 30_000;
     }
+  });
+
+  it('reports when requests fell back to a spare model', async () => {
+    RETRY_BACKOFF_MS.value = 1;
+    const ok = new Response(JSON.stringify({ choices: [{ message: { content: '{"suggestions":[]}' } }] }));
+    const limited = () => new Response('rate limited', { status: 429 });
+    const f = vi.fn().mockResolvedValueOnce(limited()).mockResolvedValueOnce(limited()).mockResolvedValueOnce(ok);
+    vi.stubGlobal('fetch', f);
+    try {
+      const cfg = { ...config, model: 'primary-model, spare-model' };
+      const { fallbackNotice } = await suggestWithLlm([field({ id: 'f1' })], profile, cfg);
+      expect(fallbackNotice).toMatch(/spare-model/);
+    } finally {
+      RETRY_BACKOFF_MS.value = 30_000;
+    }
+  });
+
+  it('fetchAvailableModels parses GET /models from any OpenAI-compatible endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ data: [{ id: 'm-b' }, { id: 'm-a' }, { id: 'm-a' }] }),
+      { status: 200 },
+    )));
+    const list = await fetchAvailableModels('http://llm.test/v1/', 'key-123');
+    expect(list).toEqual(['m-a', 'm-b']); // sorted, deduped, trailing slash handled
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    expect(url).toBe('http://llm.test/v1/models');
+    expect((init as RequestInit).headers).toEqual({ Authorization: 'Bearer key-123' });
+  });
+
+  it('returns an empty model list on endpoint failure (no throw)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 401 })));
+    expect(await fetchAvailableModels('http://llm.test/v1')).toEqual([]);
   });
 
   it('returns empty without any network call when unconfigured', async () => {
