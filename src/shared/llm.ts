@@ -12,6 +12,9 @@ import { isSensitive } from './match';
 export interface LlmConfig {
   baseUrl: string;
   apiKey: string;
+  /** One model, or comma-separated spares: "m1, m2". When a model keeps
+   *  returning 429 after its patient retry (free-tier per-model caps, e.g.
+   *  Groq), the next spare is tried with the same fields. */
   model: string;
 }
 
@@ -79,14 +82,48 @@ function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
-/** Fields per LLM call — small batches keep narrative JSON short enough that
- *  small models don't truncate or mangle it. */
-const BATCH_SIZE = 3;
+/** Fields per LLM call, split by expected ANSWER size — the constraint is the
+ *  output budget (max_tokens 2048), not input. Short answers ("Yes", "5") cost
+ *  ~20 tokens each, so a dozen fit safely in one request; narrative answers
+ *  cost 150–300 tokens each and degrade small-model JSON past three. */
+const SHORT_BATCH_SIZE = 12;
+const NARRATIVE_BATCH_SIZE = 3;
 
-/** Free-tier-friendly pacing: batches run SEQUENTIALLY with this gap between
- *  starts. Groq's gpt-oss-20b free tier allows only ~8,000 TPM — three parallel
- *  16k-token prompts trip it instantly. Sequential + spacing keeps each minute
- *  to roughly one prompt. */
+export function splitBatches(fields: FieldDescriptor[]): FieldDescriptor[][] {
+  const short = fields.filter((f) => f.type !== 'textarea');
+  const narrative = fields.filter((f) => f.type === 'textarea');
+  const out: FieldDescriptor[][] = [];
+  for (let i = 0; i < short.length; i += SHORT_BATCH_SIZE) out.push(short.slice(i, i + SHORT_BATCH_SIZE));
+  for (let i = 0; i < narrative.length; i += NARRATIVE_BATCH_SIZE) out.push(narrative.slice(i, i + NARRATIVE_BATCH_SIZE));
+  return out;
+}
+
+/** Free tiers like Groq cap tokens-per-minute hard and per MODEL (gpt-oss-20b:
+ *  8k TPM; llama-3.1-8b-instant: its own separate, larger pool). Every request
+ *  re-ships the full profile+documents context (~16k tokens), so on those
+ *  endpoints two requests inside the same minute cannot fit under one cap.
+ *  There we pace requests AND rotate across the model list — each model draws
+ *  from its own limit, which multiplies effective throughput. Other providers
+ *  run parallel with a single model. */
+export function needsPacing(baseUrl: string): boolean {
+  try {
+    return /(^|\.)groq\.com$/i.test(new URL(baseUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** Groq free-tier fallback chain, best-first. gpt-oss-20b writes the best
+ *  narrative JSON; llama-3.1-8b-instant has the biggest free pool (separate
+ *  TPM bucket); allam-2-7b is the last resort. Non-Groq endpoints ignore this
+ *  and use the user's configured model for everything. */
+export const GROQ_MODEL_CHAIN = [
+  'openai/gpt-oss-20b',
+  'llama-3.1-8b-instant',
+  'allam-2-7b',
+];
+
+/** Gap between consecutive requests on paced (tight-TPM) endpoints. */
 export const BATCH_GAP_MS = 15_000;
 
 /** Backoff before the one retry on 429/5xx (tests stub this). */
@@ -108,23 +145,35 @@ export async function suggestWithLlm(
   if (!config.baseUrl || !config.model || fields.length === 0) return out;
 
   const known = new Set(fields.map((f) => f.id));
-  // Batches run sequentially with a gap: one malformed batch loses only its
-  // own fields, and free-tier token-per-minute limits are never tripped by
-  // concurrency (a 429 still triggers the patient retry inside requestBatch).
-  const chunks: FieldDescriptor[][] = [];
-  for (let i = 0; i < fields.length; i += BATCH_SIZE) chunks.push(fields.slice(i, i + BATCH_SIZE));
-  for (let i = 0; i < chunks.length; i++) {
-    if (i > 0) await new Promise((r) => setTimeout(r, BATCH_GAP_MS));
-    try {
-      for (const [k, v] of await requestBatch(chunks[i], profile, config, pageContext, known)) {
-        out.suggestions.set(k, v);
-      }
-    } catch (e) {
-      const first = i * BATCH_SIZE + 1;
-      out.errors.push(`questions ${first}–${Math.min(first + chunks[i].length - 1, fields.length)}: ${e instanceof Error ? e.message : 'failed'}`);
+  // Short-answer fields go out as few big requests; textareas (narrative
+  // JSON) stay in small ones. Paced endpoints (tight free-tier TPM, e.g.
+  // Groq) run sequentially with a gap so the per-minute token budget is
+  // never tripped by concurrency; everyone else runs fully parallel. A 429
+  // still triggers the patient retry inside requestBatch either way.
+  const chunks = splitBatches(fields);
+  const paced = needsPacing(config.baseUrl);
+  const runChunk = (chunk: FieldDescriptor[], index: number): Promise<void> =>
+    requestBatch(chunk, profile, config, pageContext, known).then((result) => {
+      for (const [k, v] of result) out.suggestions.set(k, v);
+    }).catch((e: unknown) => {
+      const first = fields.indexOf(chunk[0]) + 1;
+      out.errors.push(`questions ${first}–${first + chunk.length - 1}: ${e instanceof Error ? e.message : 'failed'}`);
+      return undefined;
+    });
+  if (paced) {
+    for (let i = 0; i < chunks.length; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, BATCH_GAP_MS));
+      await runChunk(chunks[i], i);
     }
+  } else {
+    await Promise.all(chunks.map(runChunk));
   }
   return out;
+}
+
+/** Models to try in order: "m1, m2" → ["m1", "m2"]. Whitespace-tolerant. */
+export function modelChain(model: string): string[] {
+  return model.split(',').map((m) => m.trim()).filter(Boolean);
 }
 
 async function requestBatch(
@@ -134,9 +183,29 @@ async function requestBatch(
   pageContext: PageContext | undefined,
   knownIds: Set<string>,
 ): Promise<Map<string, Suggestion>> {
+  const chain = modelChain(config.model);
+  let lastError: Error | null = null;
+  for (const modelName of chain) {
+    try {
+      return await requestBatchWithModel(fields, profile, config, pageContext, knownIds, modelName);
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+    }
+  }
+  throw lastError ?? new Error('LLM request failed.');
+}
+
+async function requestBatchWithModel(
+  fields: FieldDescriptor[],
+  profile: Profile,
+  config: LlmConfig,
+  pageContext: PageContext | undefined,
+  knownIds: Set<string>,
+  model: string,
+): Promise<Map<string, Suggestion>> {
   for (let attempt = 0; attempt < 2; attempt++) {
     let body: Record<string, unknown> = {
-      model: config.model,
+      model,
       temperature: 0,
       max_tokens: 2048,
       messages: [
@@ -219,7 +288,10 @@ function finalize(content: string, knownIds: Set<string>): Map<string, Suggestio
       }
     }
   }
-  if (suggestions.length === 0) throw new Error('LLM returned malformed output.');
+  // An explicitly empty suggestion list is a VALID response ("no answer for
+  // these") — only total garbage (unparseable AND nothing salvageable) is an
+  // error worth rotating models for.
+  if (!suggestions) throw new Error('LLM returned malformed output.');
   for (const s of suggestions) {
     if (!knownIds.has(s.fieldId)) continue; // reject hallucinated field ids
     const value = s.value?.trim() ? s.value.trim() : null;

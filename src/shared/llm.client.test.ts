@@ -83,7 +83,48 @@ describe('suggestWithLlm', () => {
     expect(errors[0]).toMatch(/HTTP 500/);
   });
 
-  it('paces batches sequentially with a gap (free-tier TPM friendly)', async () => {
+  it('batches by answer size: short fields share one request, textareas stay small', async () => {
+    RETRY_BACKOFF_MS.value = 1;
+    const f = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: '{"suggestions":[]}' } }] })),
+    );
+    vi.stubGlobal('fetch', f);
+    try {
+      // 12 short fields → 1 request. A textarea rides along in a small batch.
+      const many = Array.from({ length: 12 }, (_, i) => field({ id: `s${i}`, name: `n${i}` }));
+      const ta = field({ id: 't1', type: 'textarea' as const, label: 'Why us?' });
+      await suggestWithLlm([...many, ta], profile, config);
+    } finally {
+      RETRY_BACKOFF_MS.value = 30_000;
+    }
+    expect(f).toHaveBeenCalledTimes(2); // [12 shorts] + [1 textarea]
+    const sent = f.mock.calls.map((c) => JSON.parse(c[1].body).messages[1].content);
+    const counts = sent.map((s: string) => (JSON.parse(s).fields as unknown[]).length);
+    expect(counts).toEqual([12, 1]);
+  });
+
+  it('rotates to the next model in the chain when one keeps failing', async () => {
+    RETRY_BACKOFF_MS.value = 1;
+    const ok = new Response(JSON.stringify({ choices: [{ message: { content: '{"suggestions":[]}' } }] }));
+    const limited = () => new Response('rate limited', { status: 429 });
+    const f = vi.fn()
+      .mockResolvedValueOnce(limited()) // primary, attempt 1
+      .mockResolvedValueOnce(limited()) // primary, attempt 2 (after backoff) → rotate
+      .mockResolvedValueOnce(ok);       // spare, attempt 1 → done
+    vi.stubGlobal('fetch', f);
+    try {
+      const cfg = { ...config, model: 'primary-model, spare-model' };
+      const { errors } = await suggestWithLlm([field({ id: 'f1' })], profile, cfg);
+      expect(errors).toHaveLength(0);
+      const modelsUsed = f.mock.calls.map((c) => JSON.parse(c[1].body).model);
+      // patient retry on primary, then rotate to spare
+      expect(modelsUsed).toEqual(['primary-model', 'primary-model', 'spare-model']);
+    } finally {
+      RETRY_BACKOFF_MS.value = 30_000;
+    }
+  });
+
+  it('paces requests on tight-TPM endpoints (Groq) but not others', async () => {
     RETRY_BACKOFF_MS.value = 1;
     const f = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ choices: [{ message: { content: '{"suggestions":[]}' } }] })),
@@ -96,13 +137,19 @@ describe('suggestWithLlm', () => {
       return origSetTimeout(fn, 0);
     }) as typeof setTimeout);
     try {
-      await suggestWithLlm([field({ id: 'f1' }), field({ id: 'f2', name: 'b' }), field({ id: 'f3', name: 'c' }), field({ id: 'f4', name: 'd' })], profile, config);
+      const shorts = Array.from({ length: 13 }, (_, i) => field({ id: `p${i}`, name: `n${i}` }));
+      await suggestWithLlm(shorts, profile, { ...config, baseUrl: 'https://api.groq.com/openai/v1' });
+      expect(f).toHaveBeenCalledTimes(2); // 13 > SHORT_BATCH_SIZE
+      expect(sleeps.filter((ms) => ms === BATCH_GAP_MS)).toHaveLength(1);
+
+      f.mockClear();
+      sleeps.length = 0;
+      await suggestWithLlm(shorts, profile, config); // non-paced endpoint
+      expect(sleeps.filter((ms) => ms === BATCH_GAP_MS)).toHaveLength(0);
     } finally {
       vi.unstubAllGlobals();
       RETRY_BACKOFF_MS.value = 30_000;
     }
-    expect(f).toHaveBeenCalledTimes(2); // 4 fields / batch size 3
-    expect(sleeps.filter((ms) => ms === BATCH_GAP_MS)).toHaveLength(1); // one gap before batch 2
   });
 
   it('returns empty without any network call when unconfigured', async () => {
