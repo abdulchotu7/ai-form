@@ -23,15 +23,19 @@ the actual extension through its service worker.
   `*.live.test.ts` and are EXCLUDED from `npm test`; run them with `npm run test:live`.
   File uploads are NEVER filled — the user attaches files manually (resume auto-attach
   was removed by user decision).
-- **Trusted-input filling (critical invariant):** synthetic input events are
-  `isTrusted:false` and some frameworks' validators never accept them — the DOM shows the
-  value but the page's own state still thinks the field is empty ("required" errors on
-  submit even though content is visible). So ALL free-text fields (input/textarea) are
-  retyped via chrome.debugger CDP `Input.insertText` (real trusted keystrokes) after the
-  initial synthetic write, then verified READ-ONLY (`AF_FILL` + `verifyOnly` → `verifyFill`
-  in fill.ts) — never re-written with synthetic events after trusted input, which would
-  clobber the framework state the keystrokes just fixed. Selects/radios/checkboxes don't
-  need this (click/change works there).
+- **Fill scope (user decision, 2026-08): TEXT fields only** — input/textarea
+  (incl. email/tel/number/date). Selects, radios, checkboxes and file uploads
+  report `manual`; the user fills dropdowns, resume and CAPTCHAs themselves.
+- **LLM has final say on every text answer.** Deterministic profile matches are
+  shipped to the LLM as `suggestedAnswer` hints; the model confirms, corrects
+  or rejects each one. No field fills without LLM sign-off.
+- **No CDP trusted-input filling.** It was tried (retype via chrome.debugger
+  Input.insertText) and removed — it didn't hold up on the user's real portal.
+  Known limitation: frameworks whose validators only accept trusted keystrokes
+  (isTrusted:false synthetic events rejected) will show filled DOM values but
+  keep empty internal state → "required field" errors on submit. Workaround:
+  delete-and-retype one character per affected field. Documented in e2e
+  (form-react.html fixture).
 - **Stack:** TypeScript strict, Vite 6 (3 configs: sidepanel React app, content IIFE,
   background IIFE), React 18, zod for all boundary validation, vitest + happy-dom,
   Playwright (`playwright-core`) for e2e.
