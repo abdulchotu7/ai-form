@@ -47,7 +47,7 @@ export interface Suggestion {
   reason: string;
 }
 
-export type FillStatus = 'filled' | 'not-found' | 'skipped-sensitive' | 'failed' | 'empty';
+export type FillStatus = 'filled' | 'not-found' | 'skipped-sensitive' | 'failed' | 'empty' | 'manual';
 
 export interface FillResult {
   fieldId: string;

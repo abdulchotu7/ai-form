@@ -3,7 +3,7 @@
   "name": "AI Form Assistant",
   "version": "0.1.0",
   "description": "Understand web forms and suggest answers from your personal context. You stay in control: review every suggestion before it fills.",
-  "permissions": ["storage", "unlimitedStorage", "sidePanel", "scripting", "debugger"],
+  "permissions": ["storage", "unlimitedStorage", "sidePanel", "scripting"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "action": {
     "default_title": "AI Form Assistant"

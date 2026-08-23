@@ -124,72 +124,7 @@ export async function fillFields(
       }
     }),
   );
-
-  // Trusted-input retype for free-text fields (the default path now). Synthetic
-  // input events are isTrusted:false and some frameworks' validators never
-  // accept them — the DOM shows the right value but the page's own state still
-  // thinks the field is empty ("required" errors on submit even though content
-  // is visible). Real keystrokes via chrome.debugger fix that. Shows Chrome's
-  // debugging banner for a moment.
-  const FREE_TEXT = new Set(['input', 'textarea']);
-  const toRetype = results.filter((r) => {
-    if (r.status !== 'filled' && r.status !== 'failed') return false;
-    return FREE_TEXT.has(values.find((v) => v.fieldId === r.fieldId)?.kind ?? '');
-  });
-  if (toRetype.length > 0) {
-    const refilled = await cdpRefill(tabId, toRetype, values).catch(() => [] as FillResult[]);
-    for (const r of refilled) {
-      const i = results.findIndex((x) => x.fieldId === r.fieldId);
-      if (i >= 0) results[i] = r;
-    }
-  }
   return { results };
-}
-
-/**
- * Re-type fields as trusted input via CDP, then verify READ-ONLY.
- * The retype itself never re-writes with synthetic events — that would clobber
- * the framework state the real keystrokes just fixed.
- */
-async function cdpRefill(
-  tabId: number,
-  targets: FillResult[],
-  values: { fieldId: string; value: string; kind?: string }[],
-): Promise<FillResult[]> {
-  const debuggee = { tabId };
-  await chrome.debugger.attach(debuggee, '1.3');
-  try {
-    for (const r of targets) {
-      const [frameId, local] = split(r.fieldId);
-      const v = values.find((x) => x.fieldId === r.fieldId)?.value;
-      if (!v) continue;
-      await sendToFrame(tabId, frameId, { type: 'AF_FOCUS', fieldId: local, clear: true });
-      await chrome.debugger.sendCommand(debuggee, 'Input.insertText', { text: v });
-    }
-  } finally {
-    await chrome.debugger.detach(debuggee).catch(() => {});
-  }
-  // Verify read-only (AF_FILL + verifyOnly) — no DOM writes after trusted input.
-  const redo = new Map<number, { fieldId: string; value: string }[]>();
-  const out: FillResult[] = [];
-  for (const r of targets) {
-    const [frameId, local] = split(r.fieldId);
-    const v = values.find((x) => x.fieldId === r.fieldId)!.value;
-    const list = redo.get(frameId) ?? [];
-    list.push({ fieldId: local, value: v });
-    redo.set(frameId, list);
-  }
-  await Promise.all(
-    [...redo].map(async ([frameId, vals]) => {
-      try {
-        const r = await sendToFrame<{ results: FillResult[] }>(tabId, frameId, { type: 'AF_FILL', values: vals, verifyOnly: true });
-        out.push(...r.results.map((res) => ({ ...res, fieldId: `${prefix(frameId)}${res.fieldId}` })));
-      } catch {
-        out.push(...vals.map((v) => ({ fieldId: v.fieldId, status: 'failed' as const })));
-      }
-    }),
-  );
-  return out;
 }
 
 export async function currentPageInfo(): Promise<{ host: string; isAnalyzable: boolean }> {

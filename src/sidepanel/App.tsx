@@ -71,67 +71,57 @@ export default function App() {
         return;
       }
 
-      setStageLabel(`Matching ${detected.fields.length} fields against your profile…`);
+      setStageLabel(`Preparing ${detected.fields.length} fields…`);
       const analyzed: AnalyzedField[] = [];
-      const ambiguous: FieldDescriptor[] = [];
+      const forLlm: FieldDescriptor[] = [];
+      const hints = new Map<string, string>();
 
       for (const field of detected.fields) {
         const sensitive = isSensitive(field);
-        if (field.type === 'file') {
-          // File uploads are never touched — the user attaches files manually.
-          analyzed.push({
-            field,
-            sensitive: false,
-            included: false,
-            suggestion: {
-              fieldId: field.id,
-              value: null,
-              confidence: 0,
-              source: 'unresolved',
-              reason: 'File upload — attach it yourself.',
-            },
-          });
+        // Scope: the extension fills TEXT fields only. Selects, radios,
+        // checkboxes and file uploads are manual — the user does those.
+        if (!sensitive && (field.type === 'text' || field.type === 'textarea' || field.type === 'email' || field.type === 'tel' || field.type === 'number' || field.type === 'date')) {
+          // Deterministic profile match is a HINT for the LLM to verify or
+          // correct, not a final answer.
+          const det = deterministicMatch(field, profile);
+          if (det?.value) hints.set(field.id, det.value);
+          analyzed.push({ field, sensitive, included: false, suggestion: { fieldId: field.id, value: null, confidence: 0, source: 'unresolved', reason: '' } });
+          forLlm.push(field);
           continue;
         }
-        if (sensitive) {
-          analyzed.push({
-            field,
-            sensitive,
-            included: false,
-            suggestion: {
-              fieldId: field.id,
-              value: null,
-              confidence: 0,
-              source: 'unresolved',
-              reason: 'Sensitive field — manual entry required.',
-            },
-          });
-          continue;
-        }
-        const det = deterministicMatch(field, profile);
-        if (det) {
-          analyzed.push({ field, sensitive, included: det.value !== null, suggestion: det });
-        } else {
-          analyzed.push({ field, sensitive, included: true, suggestion: { fieldId: field.id, value: null, confidence: 0, source: 'unresolved', reason: '' } });
-          ambiguous.push(field);
-        }
+        analyzed.push({
+          field,
+          sensitive,
+          included: false,
+          suggestion: {
+            fieldId: field.id,
+            value: null,
+            confidence: 0,
+            source: 'unresolved',
+            reason: sensitive
+              ? 'Sensitive field — manual entry required.'
+              : `${field.type} field — fill it manually (dropdowns, checkboxes and uploads stay yours).`,
+          },
+        });
       }
 
-      if (ambiguous.length > 0) {
+      if (forLlm.length > 0) {
         const settings = await loadSettings();
         if (settings.llmBaseUrl && settings.llmModel) {
-          setStageLabel(`Asking the AI about ${ambiguous.length} open question${ambiguous.length > 1 ? 's' : ''}…`);
+          setStageLabel(`Asking the AI about ${forLlm.length} question${forLlm.length > 1 ? 's' : ''}…`);
           try {
             const llmResult = await suggestWithLlm(
-              ambiguous,
+              forLlm,
               profile,
               { baseUrl: settings.llmBaseUrl, apiKey: settings.llmApiKey, model: settings.llmModel },
               detected.pageContext,
+              hints,
             );
             for (const a of analyzed) {
               const s = llmResult.suggestions.get(a.field.id);
-              // Only fill gaps: deterministic matches always win. Implausible
-              // answers (city in a pincode field etc.) are dropped, not filled.
+              // The LLM had the final say (it saw the deterministic hint and
+              // confirmed/corrected/rejected it). Implausible answers (city in
+              // a pincode field etc.) are still dropped, not filled.
               if (s && !a.sensitive && a.suggestion.source === 'unresolved') {
                 if (s.value !== null && !plausible(a.field, s.value)) continue;
                 a.suggestion = s;
@@ -148,10 +138,10 @@ export default function App() {
               setNotice(llmResult.fallbackNotice);
             }
           } catch (e) {
-            setNotice(e instanceof Error ? e.message : 'AI suggestions failed; showing deterministic matches only.');
+            setNotice(e instanceof Error ? e.message : 'AI suggestions failed.');
           }
         } else {
-          setNotice('AI suggestions are off — add an LLM endpoint in Settings to resolve open questions.');
+          setNotice('AI suggestions are off — add an LLM endpoint in Settings to answer text questions.');
         }
       }
 

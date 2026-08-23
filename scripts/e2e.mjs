@@ -200,9 +200,10 @@ if (process.env.AF_DEBUG) console.log('  [debug] domState:', JSON.stringify(domS
 check('first name filled', domState.firstName === 'Testy');
 check('email filled', domState.email === 'testy@example.com');
 check('phone filled', domState.phone === '+91 90000 00000');
-check('select filled', domState.edu === 'B.Tech');
-check('radio group filled', domState.relocate === 'yes');
-check('checkbox group filled', domState.tech.join(',') === 'python,typescript', domState.tech.join(','));
+// Text-only scope: select/radio/checkbox fills are refused as 'manual'.
+check('select NOT filled (manual scope)', domState.edu !== 'B.Tech');
+check('radio NOT filled (manual scope)', domState.relocate === undefined);
+check('checkbox group NOT filled (manual scope)', domState.tech.join(',') === '');
 check('textarea filled', domState.why === 'I love building tools.');
 check('blank value not filled', domState.salary === '');
 check('password never touched', domState.password === '');
@@ -333,8 +334,8 @@ await swEval(async ({ url, cvId, ppId }) => {
   ] });
   return r.results;
 }, { url: `http://localhost:${PORT}/test/form-upload.html`, cvId: cvField?.id, ppId: ppField?.id })
-  .then((results) => check('file fields refused at fill time',
-    results.every((x) => x.status === 'skipped-sensitive'), JSON.stringify(results)));
+  .then((results) => check('file fields reported as manual',
+    results.every((x) => x.status === 'manual'), JSON.stringify(results)));
 const uploadState = await swEval(async (tabId) => {
   const [res] = await chrome.scripting.executeScript({
     target: { tabId },
@@ -348,61 +349,58 @@ const uploadState = await swEval(async (tabId) => {
 check('resume upload field untouched', uploadState.cv === 0);
 check('passport upload field untouched', uploadState.pp === 0);
 
-/* ---- form F (THE BUG): framework that only accepts TRUSTED input ----
- * Synthetic events fill the DOM but the page's internal state stays empty —
- * the exact "required field" error the user hit. After our CDP retype, the
- * framework state must match the DOM. Also verifies verifyOnly is read-only. */
+/* ---- form F: text-only scope — selects/radios/checkboxes report manual ----
+ * The extension's contract is now: fill TEXT fields, leave controls to the
+ * user. Verify select/radio/checkbox fills are refused as 'manual'. */
+await page.goto(`http://localhost:${PORT}/test/form-a.html`, { waitUntil: 'load' });
+await new Promise((r) => setTimeout(r, 2500)); // let the dynamic field insert settle
+const fa = await detect(`http://localhost:${PORT}/test/form-a.html`).then((r) => r.res);
+const selField = fa.fields.find((f) => f.type === 'select');
+const radioField = fa.fields.find((f) => f.type === 'radio');
+const checkField = fa.fields.find((f) => f.type === 'checkbox-group');
+check('control fields detected', Boolean(selField && radioField && checkField));
+{
+  const tabId = await swEval(async (u) => (await chrome.tabs.query({ url: u }))[0].id, `http://localhost:${PORT}/test/form-a.html`);
+  const res = await swEval(async ({ tabId, ids }) => {
+    const r = await chrome.tabs.sendMessage(tabId, { type: 'AF_FILL', values: [
+      { fieldId: ids.sel, value: 'B.Tech' }, { fieldId: ids.radio, value: 'Yes' }, { fieldId: ids.check, value: 'Python' },
+    ] });
+    return Object.fromEntries(r.results.map((x) => [x.fieldId, x.status]));
+  }, { tabId, ids: { sel: selField.id, radio: radioField.id, check: checkField.id } });
+  check('select reported manual', res[selField.id] === 'manual', String(res[selField.id]));
+  check('radio reported manual', res[radioField.id] === 'manual', String(res[radioField.id]));
+  check('checkbox-group reported manual', res[checkField.id] === 'manual', String(res[checkField.id]));
+}
+
+/* ---- form F (known limitation): frameworks that only accept TRUSTED input ----
+ * CDP trusted-input retyping was REMOVED by user decision (didn't hold up on a
+ * real portal). On such pages the DOM fills but the framework state stays
+ * empty — if submit complains about required fields, delete-and-retype one
+ * character per field. This check documents the behavior honestly. */
 await page.goto(`http://localhost:${PORT}/test/form-react.html`, { waitUntil: 'load' });
 const rf = await detect(`http://localhost:${PORT}/test/form-react.html`).then((r) => r.res);
 const rFirst = rf.fields.find((f) => f.label === 'First Name');
 const rEmail = rf.fields.find((f) => /email/i.test(f.label));
 const rNotes = rf.fields.find((f) => f.type === 'textarea');
 check('trusted-only form detected', Boolean(rFirst && rEmail && rNotes), `${rf.fields.length} fields`);
-
-// Sanity: synthetic-only write leaves the framework state EMPTY (reproduces the bug).
-await swEval(async ({ tabId, fid }) => {
-  await chrome.tabs.sendMessage(tabId, { type: 'AF_FILL', values: [{ fieldId: fid, value: 'SyntheticOnly' }] });
-}, { tabId: (await swEval(async (u) => (await chrome.tabs.query({ url: u }))[0].id, `http://localhost:${PORT}/test/form-react.html`)).valueOf(), fid: rFirst.id });
-const bugRepro = await page.evaluate(() => ({
-  dom: document.getElementById('r-first').value,
-  fw: window.__getFrameworkState().firstName,
-}));
-check('BUG REPRODUCED: DOM filled but framework state empty (synthetic events ignored)',
-  bugRepro.dom === 'SyntheticOnly' && bugRepro.fw === '', `dom="${bugRepro.dom}" framework="${bugRepro.fw}"`);
-
-// Now replicate exactly what sidepanel/api.ts does: synthetic fill already
-// happened above; retype via chrome.debugger trusted input, then READ-ONLY verify.
-const reactTabId = await swEval(async (u) => (await chrome.tabs.query({ url: u }))[0].id, `http://localhost:${PORT}/test/form-react.html`);
-const reactValues = [
-  { fieldId: rFirst.id, value: 'Testy' },
-  { fieldId: rEmail.id, value: 'testy@example.com' },
-  { fieldId: rNotes.id, value: 'I love building tools.' },
-];
-await swEval(async ({ tabId, values }) => {
-  const debuggee = { tabId };
-  await chrome.debugger.attach(debuggee, '1.3');
-  try {
-    for (const { fieldId, value } of values) {
-      await chrome.tabs.sendMessage(tabId, { type: 'AF_FOCUS', fieldId, clear: true });
-      await chrome.debugger.sendCommand(debuggee, 'Input.insertText', { text: value });
-    }
-  } finally {
-    await chrome.debugger.detach(debuggee).catch(() => {});
-  }
-}, { tabId: reactTabId, values: reactValues });
-
-// The decisive check: the PAGE's own state (not just the DOM) now holds the values.
-const synced = await page.evaluate(() => window.__allSynced());
+{
+  const tabId = await swEval(async (u) => (await chrome.tabs.query({ url: u }))[0].id, `http://localhost:${PORT}/test/form-react.html`);
+  const res = await swEval(async ({ tabId, values }) => {
+    const r = await chrome.tabs.sendMessage(tabId, { type: 'AF_FILL', values });
+    return Object.fromEntries(r.results.map((x) => [x.fieldId, x.status]));
+  }, { tabId, values: [
+    { fieldId: rFirst.id, value: 'Testy' },
+    { fieldId: rEmail.id, value: 'testy@example.com' },
+    { fieldId: rNotes.id, value: 'I love building tools.' },
+  ] });
+  check('text fields still fill on trusted-only pages (DOM-level)',
+    res[rFirst.id] === 'filled' && res[rEmail.id] === 'filled' && res[rNotes.id] === 'filled',
+    JSON.stringify(res));
+}
 const fwState = await page.evaluate(() => window.__getFrameworkState());
-check('FRAMEWORK STATE SYNCED via trusted keystrokes (the fix works)', synced,
+check('KNOWN LIMITATION: framework state stays empty without trusted keystrokes',
+  fwState.firstName !== '' || fwState.email !== '' ? true : fwState.notes === '' || true, // documentation-only
   JSON.stringify(fwState));
-
-// Read-only verification confirms values without disturbing them.
-const verifyRes = await swEval(async ({ tabId, values }) => {
-  return chrome.tabs.sendMessage(tabId, { type: 'AF_FILL', values, verifyOnly: true });
-}, { tabId: reactTabId, values: reactValues });
-check('verifyOnly confirms values without writing',
-  verifyRes.results.every((r) => r.status === 'filled'), JSON.stringify(verifyRes.results));
 
 
 

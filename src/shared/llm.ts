@@ -34,6 +34,11 @@ Rules:
   derive an answer that follows from the facts (e.g., years of experience from employment dates).
   Every fact in a composed answer must be traceable to the context. For composed multi-sentence answers,
   keep confidence at or below 0.85 and say in "reason" which context you synthesized it from.
+- Some fields carry a "suggestedAnswer" — a candidate matched from the user's saved profile by exact
+  label rules. Treat it as a HINT, not the truth: confirm it if the question genuinely asks for that
+  data, correct it when the mapping is off (e.g. "current" vs "expected" compensation, first name vs
+  full name), or return null when the question asks for something else entirely. Say in "reason" which
+  you did (confirmed / corrected / rejected).
 - If the context does not contain enough information to answer — even partially — set value to null and
   confidence to 0. A missing answer is always better than an invented one.
 - When a field has options (select/radio), value MUST be exactly one of those options, or null.
@@ -44,7 +49,15 @@ Respond with JSON only, matching exactly:
 {"suggestions":[{"fieldId":"<id>","value":<string|null>,"confidence":<0..1>,"reason":"<string>"}]}
 Include one entry per field, using the exact fieldId values given.`;
 
-export function buildUserPrompt(fields: FieldDescriptor[], profile: Profile, pageContext?: PageContext): string {
+export function buildUserPrompt(
+  fields: FieldDescriptor[],
+  profile: Profile,
+  pageContext?: PageContext,
+  /** Deterministic profile-match candidates — the LLM verifies or corrects
+   *  these rather than answering blind. Keyed by fieldId. */
+  hints?: Map<string, string>,
+): string {
+  const hintFor = (id: string) => hints?.get(id);
   const safeFields = fields.filter((f) => !isSensitive(f)).map((f) => ({
     fieldId: f.id,
     type: f.type,
@@ -52,6 +65,10 @@ export function buildUserPrompt(fields: FieldDescriptor[], profile: Profile, pag
     extraContext: f.context || undefined,
     required: f.required,
     options: f.options.length ? f.options : undefined,
+    // A candidate answer already matched from the user's profile. Confirm it
+    // if the question truly asks for this data, correct it if the mapping is
+    // wrong (e.g. "current" vs "expected" salary), or replace with null.
+    suggestedAnswer: hintFor(f.id),
   }));
   // ponytail: 8k chars per document — fits any 2-page resume, keeps prompts fast.
   // Raise the cap if resumes grow or latency stops mattering.
@@ -162,6 +179,9 @@ export async function suggestWithLlm(
   profile: Profile,
   config: LlmConfig,
   pageContext?: PageContext,
+  /** Deterministic profile-match candidates keyed by fieldId — shipped as
+   *  "suggestedAnswer" hints the LLM confirms, corrects, or rejects. */
+  hints?: Map<string, string>,
 ): Promise<SuggestResult> {
   const out: SuggestResult = { suggestions: new Map(), errors: [] };
   if (!config.baseUrl || !config.model || fields.length === 0) return out;
@@ -176,7 +196,7 @@ export async function suggestWithLlm(
   const paced = needsPacing(config.baseUrl);
   let rotated = 0;
   const runChunk = (chunk: FieldDescriptor[]): Promise<void> =>
-    requestBatch(chunk, profile, config, pageContext, known).then(({ suggestions: result, usedSpare }) => {
+    requestBatch(chunk, profile, config, pageContext, known, hints).then(({ suggestions: result, usedSpare }) => {
       if (usedSpare) rotated++;
       for (const [k, v] of result) out.suggestions.set(k, v);
     }).catch((e: unknown) => {
@@ -210,12 +230,13 @@ async function requestBatch(
   config: LlmConfig,
   pageContext: PageContext | undefined,
   knownIds: Set<string>,
+  hints?: Map<string, string>,
 ): Promise<{ suggestions: Map<string, Suggestion>; usedSpare: boolean }> {
   const chain = modelChain(config.model);
   let lastError: Error | null = null;
   for (let i = 0; i < chain.length; i++) {
     try {
-      return { suggestions: await requestBatchWithModel(fields, profile, config, pageContext, knownIds, chain[i]), usedSpare: i > 0 };
+      return { suggestions: await requestBatchWithModel(fields, profile, config, pageContext, knownIds, chain[i], hints), usedSpare: i > 0 };
     } catch (e) {
       lastError = e instanceof Error ? e : new Error(String(e));
     }
@@ -230,6 +251,7 @@ async function requestBatchWithModel(
   pageContext: PageContext | undefined,
   knownIds: Set<string>,
   model: string,
+  hints?: Map<string, string>,
 ): Promise<Map<string, Suggestion>> {
   for (let attempt = 0; attempt < 2; attempt++) {
     let body: Record<string, unknown> = {
@@ -253,6 +275,7 @@ async function requestBatchWithModel(
               ? profile
               : { ...profile, documents: { resume: '', portfolio: '' } },
             pageContext,
+            hints,
           ),
         },
       ],
