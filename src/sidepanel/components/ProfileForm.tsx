@@ -48,7 +48,6 @@ function LoadFileButton({ onText }: { onText: (t: string) => void }) {
 
 export function ProfileForm({ initial, onSave }: Props) {
   const [p, setP] = useState<Profile>(initial);
-  const [saved, setSaved] = useState(false);
 
   useEffect(() => setP(initial), [initial]);
 
@@ -56,13 +55,10 @@ export function ProfileForm({ initial, onSave }: Props) {
     const next = structuredClone(p);
     patch(next);
     setP(next);
-    setSaved(false);
   };
 
   const save = () => {
     onSave(p);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
   };
 
   return (
@@ -226,7 +222,6 @@ export function ProfileForm({ initial, onSave }: Props) {
 
       <div className="save-bar">
         <button className="btn primary" onClick={save}>Save profile</button>
-        {saved && <span className="save-ok">Saved ✓</span>}
         <span style={{ flex: 1 }} />
         <button
           className="btn-link"
@@ -253,7 +248,6 @@ export function ProfileForm({ initial, onSave }: Props) {
               void f.text().then((t) => {
                 try {
                   setP({ ...emptyProfile(), ...JSON.parse(t) });
-                  setSaved(false);
                 } catch {
                   alert('Not a valid profile export file.');
                 }

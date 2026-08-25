@@ -93,6 +93,42 @@ export function resolveLabel(el: HTMLInputElement | HTMLTextAreaElement | HTMLSe
     if (desc) context = context ? `${context} — ${desc}` : desc;
   }
 
+  // Unassociated questions: many sites (multi-step application wizards,
+  // custom widgets) put the question in a plain <h1>-<h4>/<p>/<span> next to
+  // the control with NO label/aria wiring at all. When the label had to fall
+  // back to placeholder or name (both are UI hints, not questions), climb the
+  // ancestor chain looking for the actual question text. Nearest ancestor
+  // wins; we stop at form/section boundaries so a neighbouring step's
+  // question is never mistaken for this field's. Depth-capped to keep
+  // scanning O(1) per field on deeply nested layouts.
+  if (!label || label === el.getAttribute('placeholder')?.trim()) {
+    const QUESTION_SELECTOR = 'h1,h2,h3,h4,h5,h6,p,[class*="question"],[class*="label"],[class*="title"]';
+    // Text that is UI chrome, not a question — buttons, hints, counters.
+    const NOT_A_QUESTION = /^(your |enter )?(answer|response|input)|^next$|^back$|^previous$|press\s.*(enter|↵)|^\*+$|required/i;
+    const BOUNDARY = 'form, fieldset';
+    let node: Element | null = el.parentElement;
+    let hops = 0;
+    climb: while (node && !(node instanceof HTMLBodyElement) && hops < 4) {
+      const candidates = [...node.querySelectorAll(QUESTION_SELECTOR)]
+        .filter((n) => !n.contains(el))
+        .map((n) => text(n))
+        .filter((t) => t.length >= 8 && !NOT_A_QUESTION.test(t));
+      if (candidates.length > 0) {
+        const q = candidates[0];
+        context = context ? `${context} — ${q}` : q;
+        // A placeholder like "Your answer here..." is not a question;
+        // prefer the mined text as the label too.
+        if (!label || /^(your |enter )?(answer|response|input)/i.test(label)) label = q;
+        break climb;
+      }
+      if (node.matches(BOUNDARY)) break; // don't leak past a form/fieldset edge
+      node = node.parentElement;
+      hops++;
+    }
+  }
+
+
+
   // For radio/checkbox, the wrapping element's sibling text often holds the option label.
   return { label, context };
 }

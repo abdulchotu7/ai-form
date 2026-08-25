@@ -398,9 +398,7 @@ check('trusted-only form detected', Boolean(rFirst && rEmail && rNotes), `${rf.f
     JSON.stringify(res));
 }
 const fwState = await page.evaluate(() => window.__getFrameworkState());
-check('KNOWN LIMITATION: framework state stays empty without trusted keystrokes',
-  fwState.firstName !== '' || fwState.email !== '' ? true : fwState.notes === '' || true, // documentation-only
-  JSON.stringify(fwState));
+check('documented limitation: trusted-only framework state is empty', fwState.firstName === '' && fwState.email === '' && fwState.notes === '', JSON.stringify(fwState));
 
 
 

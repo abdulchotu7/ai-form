@@ -41,6 +41,47 @@ describe('form detection', () => {
     expect(fields[0].placeholder).toBe('Enter your phone');
   });
 
+  it('mines an unwired sibling question instead of the placeholder text', () => {
+    // Multi-step application wizard pattern: question in a plain <p>, textarea
+    // has no label/aria wiring, only a generic placeholder.
+    const { fields } = scanForm(doc(`
+      <div>
+        <p>Describe the most relevant AI or software engineering project you have built. *
+          What problem did it solve, what did you personally build, and what was the outcome?</p>
+        <textarea placeholder="Your answer here..."></textarea>
+      </div>
+    `));
+    expect(fields[0].label).toContain('Describe the most relevant AI or software engineering project');
+    // The question must also reach the LLM via context even if label logic changes.
+    expect(fields[0].context).toContain('Describe the most relevant AI or software engineering project');
+  });
+
+  it('climbs past wrapper divs to find an unlabelled question', () => {
+    const { fields } = scanForm(doc(`
+      <div>
+        <h3>What is your greatest professional achievement?</h3>
+        <div><div><textarea placeholder="Your answer here..."></textarea></div></div>
+      </div>
+    `));
+    expect(fields[0].label).toBe('What is your greatest professional achievement?');
+  });
+
+  it('does not steal a neighbouring section question across a form boundary', () => {
+    const { fields } = scanForm(doc(`
+      <form><p>Why do you want to work here?</p></form>
+      <input type="text" placeholder="Your answer here...">
+    `));
+    // Nothing inside the input's scope — must NOT adopt the form's question.
+    expect(fields[0].label).toBe('Your answer here...');
+  });
+
+
+  it('keeps a real placeholder label when no question text exists nearby', () => {
+    const { fields } = scanForm(doc(`<input type="text" placeholder="Enter your phone">`));
+    expect(fields[0].label).toBe('Enter your phone');
+  });
+
+
   it('humanizes the name attribute as a last resort', () => {
     const { fields } = scanForm(doc(`<input type="text" name="candidate_first_name">`));
     expect(fields[0].label).toBe('candidate first name');

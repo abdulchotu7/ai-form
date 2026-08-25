@@ -13,6 +13,7 @@ interface Props {
   analysis: { fields: AnalyzedField[]; domVersion: number } | null;
   onAnalyze: () => void;
   onFill: () => void;
+  onFillField: (fieldId: string, value: string, kind: string) => void;
   onUpdateField: (fieldId: string, patch: Partial<AnalyzedField>) => void;
   onGoToSettings: () => void;
   hasProfile: boolean;
@@ -24,7 +25,17 @@ const BAND_META = {
   low: { icon: '?', cls: 'band-low', label: 'Low' },
 } as const;
 
-function FieldRow({ f, onUpdate }: { f: AnalyzedField; onUpdate: Props['onUpdateField'] }) {
+function FieldRow({
+  f,
+  onUpdate,
+  onFillField,
+  phase,
+}: {
+  f: AnalyzedField;
+  onUpdate: Props['onUpdateField'];
+  onFillField: Props['onFillField'];
+  phase: Props['phase'];
+}) {
   const [open, setOpen] = useState(false);
   const s = f.suggestion;
   const band = confidenceBand(s.confidence);
@@ -43,12 +54,19 @@ function FieldRow({ f, onUpdate }: { f: AnalyzedField; onUpdate: Props['onUpdate
     );
   }
 
-  const displayValue = s.value ?? (f.fillStatus === undefined && s.source === 'unresolved' ? '' : s.value ?? '');
+  const displayValue = s.value ?? '';
   const unresolved = s.value === null;
 
   return (
-    <div className={`row ${open ? 'open' : ''}`}>
-      <button className="row-head" onClick={() => setOpen(!open)} aria-expanded={open}>
+    <div className={`row ${open ? 'open' : ''} ${filledOk ? 'is-filled' : ''}`}>
+      <div
+        className="row-head"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(!open); } }}
+      >
         <span className={`row-icon ${meta.cls}`}>{filledOk ? '✓' : meta.icon}</span>
         <span className="row-body">
           <span className="row-label">{f.field.label || f.field.placeholder || f.field.name || f.field.type}</span>
@@ -69,7 +87,20 @@ function FieldRow({ f, onUpdate }: { f: AnalyzedField; onUpdate: Props['onUpdate
             />
           </label>
         )}
-      </button>
+        <button
+          className="btn-mini"
+          disabled={unresolved || f.fillStatus === 'filled' || phase === 'filling'}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!s.value) return;
+            onUpdate(f.field.id, { included: true });
+            onFillField(f.field.id, s.value, f.field.type);
+          }}
+          title="Fill just this field"
+        >
+          {f.fillStatus === 'filled' ? 'Done' : 'Apply'}
+        </button>
+      </div>
 
       {open && (
         <div className="row-detail">
@@ -97,6 +128,16 @@ function FieldRow({ f, onUpdate }: { f: AnalyzedField; onUpdate: Props['onUpdate
               {meta.label} confidence · {Math.round(s.confidence * 100)}%
             </span>
             {s.reason && <span className="reason">{s.reason}</span>}
+            <button
+              className="btn small primary"
+              disabled={unresolved || !displayValue || f.fillStatus === 'filled' || phase === 'filling'}
+              onClick={() => {
+                onUpdate(f.field.id, { included: true });
+                onFillField(f.field.id, displayValue, f.field.type);
+              }}
+            >
+              {f.fillStatus === 'filled' ? 'Filled' : 'Apply to page'}
+            </button>
           </div>
         </div>
       )}
@@ -183,7 +224,13 @@ export function AnalysisView(p: Props) {
 
           <div className="rows">
             {fields.map((f) => (
-              <FieldRow key={f.field.id} f={f} onUpdate={p.onUpdateField} />
+              <FieldRow
+                key={f.field.id}
+                f={f}
+                onUpdate={p.onUpdateField}
+                onFillField={p.onFillField}
+                phase={p.phase}
+              />
             ))}
           </div>
 

@@ -197,6 +197,26 @@ export default function App() {
       setPhase('ready');
     }
   }, [analysis]);
+  const fillOne = useCallback(
+    async (fieldId: string, value: string, kind: string) => {
+      const { results } = await fillFields([{ fieldId, value, kind }]);
+      const r = results[0];
+      if (!r) return;
+      setAnalysis((prev) =>
+        prev
+          ? {
+              ...prev,
+              fields: prev.fields.map((f) =>
+                f.field.id === fieldId
+                  ? { ...f, fillStatus: r.status, fillDetail: r.detail }
+                  : f,
+              ),
+            }
+          : prev,
+      );
+    },
+    [],
+  );
 
   const stale = phase === 'filled' && analysis !== null;
 
@@ -225,6 +245,7 @@ export default function App() {
             analysis={analysis}
             onAnalyze={() => void analyze()}
             onFill={() => void fillApproved()}
+            onFillField={(fieldId, value, kind) => void fillOne(fieldId, value, kind)}
             onUpdateField={updateField}
             onGoToSettings={() => setTab('settings')}
             hasProfile={Boolean(profile)}

@@ -9,7 +9,6 @@ interface Props {
 
 export function SettingsView({ onLoad, onSave }: Props) {
   const [s, setS] = useState<Settings | null>(null);
-  const [saved, setSaved] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
 
@@ -21,8 +20,6 @@ export function SettingsView({ onLoad, onSave }: Props) {
 
   const save = async () => {
     await onSave(s);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
   };
 
   const loadModels = async () => {
@@ -54,7 +51,7 @@ export function SettingsView({ onLoad, onSave }: Props) {
           <span className="field-label">Base URL</span>
           <input
             value={s.llmBaseUrl}
-            onChange={(e) => { setS({ ...s, llmBaseUrl: e.target.value }); setSaved(false); }}
+            onChange={(e) => { setS({ ...s, llmBaseUrl: e.target.value }); }}
             placeholder="https://api.openai.com/v1  ·  http://localhost:11434/v1"
           />
         </label>
@@ -64,7 +61,7 @@ export function SettingsView({ onLoad, onSave }: Props) {
             <>
               <select
                 value={models.includes(s.llmModel.trim()) || s.llmModel.includes(',') ? s.llmModel : ''}
-                onChange={(e) => { setS({ ...s, llmModel: e.target.value }); setSaved(false); }}
+                onChange={(e) => { setS({ ...s, llmModel: e.target.value }); }}
               >
                 {!models.includes(s.llmModel.trim()) && !s.llmModel.includes(',') && (
                   <option value="">— pick a model —</option>
@@ -78,7 +75,7 @@ export function SettingsView({ onLoad, onSave }: Props) {
           ) : (
             <input
               value={s.llmModel}
-              onChange={(e) => { setS({ ...s, llmModel: e.target.value }); setSaved(false); }}
+              onChange={(e) => { setS({ ...s, llmModel: e.target.value }); }}
               placeholder="gpt-4o-mini · llama3.1 · mistral…"
             />
           )}
@@ -91,7 +88,7 @@ export function SettingsView({ onLoad, onSave }: Props) {
           <input
             type="password"
             value={s.llmApiKey}
-            onChange={(e) => { setS({ ...s, llmApiKey: e.target.value }); setSaved(false); }}
+            onChange={(e) => { setS({ ...s, llmApiKey: e.target.value }); }}
             placeholder="sk-…"
           />
         </label>
@@ -108,7 +105,6 @@ export function SettingsView({ onLoad, onSave }: Props) {
 
       <div className="save-bar">
         <button className="btn primary" onClick={() => void save()}>Save settings</button>
-        {saved && <span className="save-ok">Saved ✓</span>}
       </div>
     </div>
   );

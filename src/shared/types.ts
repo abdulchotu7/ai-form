@@ -59,9 +59,7 @@ export interface FillResult {
 /** Messages side panel -> content script. */
 export type ContentRequest =
   | { type: 'AF_DETECT' }
-  | { type: 'AF_FILL'; values: { fieldId: string; value: string }[]; verifyOnly?: boolean }
-  /** Focus (and optionally clear) a field ahead of a CDP trusted-input refill. */
-  | { type: 'AF_FOCUS'; fieldId: string; clear?: boolean };
+  | { type: 'AF_FILL'; values: { fieldId: string; value: string }[]; verifyOnly?: boolean };
 
 export interface PageContext {
   title: string;
