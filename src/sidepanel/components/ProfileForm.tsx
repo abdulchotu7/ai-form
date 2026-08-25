@@ -147,7 +147,7 @@ export function ProfileForm({ initial, onSave }: Props) {
             rows={2}
             value={p.skills.join(', ')}
             onChange={(e) =>
-              set((d) => void (d.skills = e.target.value.split(',').map((s) => s.trim()).filter(Boolean)))
+              set((d) => void (d.skills = e.target.value.split(',').map((s) => s.trim().replace(/^"+|"+$/g, '')).filter(Boolean)))
             }
             placeholder="Python, SQL, Kubernetes…"
           />
