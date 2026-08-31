@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { DetectResponse, FieldDescriptor, FillResult, Profile, Suggestion } from '../shared/types';
 import { isSensitive, deterministicMatch, plausible } from '../shared/match';
 import { suggestWithLlm } from '../shared/llm';
+import { resolveLlmConfig } from '../shared/providers';
 import { detectFields, fillFields, loadProfile, loadSettings, saveProfile, saveSettings, currentPageInfo } from './api';
 import { ProfileForm } from './components/ProfileForm';
 import { AnalysisView } from './components/AnalysisView';
@@ -39,7 +40,8 @@ export default function App() {
     void (async () => {
       setProfile(await loadProfile());
       const s = await loadSettings();
-      setLlmConfigured(Boolean(s.llmBaseUrl && s.llmModel));
+      const cfg = resolveLlmConfig(s);
+      setLlmConfigured(Boolean(cfg.baseUrl && cfg.model));
     })();
     void currentPageInfo().then(({ host, isAnalyzable }) => {
       setHost(host);
@@ -107,13 +109,14 @@ export default function App() {
 
       if (forLlm.length > 0) {
         const settings = await loadSettings();
-        if (settings.llmBaseUrl && settings.llmModel) {
+        const cfg = resolveLlmConfig(settings);
+        if (cfg.baseUrl && cfg.model) {
           setStageLabel(`Asking the AI about ${forLlm.length} question${forLlm.length > 1 ? 's' : ''}…`);
           try {
             const llmResult = await suggestWithLlm(
               forLlm,
               profile,
-              { baseUrl: settings.llmBaseUrl, apiKey: settings.llmApiKey, model: settings.llmModel },
+              cfg,
               detected.pageContext,
               hints,
             );
@@ -259,7 +262,8 @@ export default function App() {
             onLoad={loadSettings}
             onSave={async (s) => {
               await saveSettings(s);
-              setLlmConfigured(Boolean(s.llmBaseUrl && s.llmModel));
+              const cfg = resolveLlmConfig(s);
+              setLlmConfigured(Boolean(cfg.baseUrl && cfg.model));
               setNotice(null);
             }}
           />

@@ -78,16 +78,17 @@ export const ProfileSchema = z.object({
 export const emptyProfile = (): Profile => ProfileSchema.parse({});
 
 export const SettingsSchema = z.object({
-  // Defaults target NVIDIA's OpenAI-compatible endpoint. The API key is
-  // injected at build time from .env (VITE_NVIDIA_API_KEY) — never committed.
-  llmBaseUrl: str.default('https://integrate.api.nvidia.com/v1'),
-  llmApiKey: str.default(
-    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_NVIDIA_API_KEY) || '',
-  ),
-  // ponytail: gpt-oss-20b benchmarked fastest with reliable JSON + good prose
-  // on integrate.api.nvidia.com (llama-3.1-8b mangles long narrative JSON;
-  // 70b+ models hit multi-minute queues). Re-benchmark if latency regresses.
-  llmModel: str.default('openai/gpt-oss-20b'),
+  // Selected Provider id from the PROVIDERS registry, plus a single Model.
+  // Defaults target NVIDIA's OpenAI-compatible endpoint.
+  providerId: str.default('nvidia'),
+  model: str.default('openai/gpt-oss-20b'),
+  // API key per curated Provider id. Empty until the user saves one or it's
+  // seeded from VITE_<PROVIDER>_API_KEY (build-time env, seed-if-empty only).
+  keys: z.record(z.string(), str).default({}),
+  // The Custom Provider keeps its own arbitrary Endpoint/Model/Key so
+  // self-hosted OpenAI-compatible servers (vLLM, SGLang, LM Studio…) work.
+  customEndpoint: str.default(''),
+  customApiKey: str.default(''),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 

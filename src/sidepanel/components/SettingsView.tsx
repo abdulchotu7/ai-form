@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { Settings } from '../../shared/schema';
-import { fetchAvailableModels } from '../../shared/llm';
+import type { Settings } from '../../shared/types';
+import { PROVIDERS, providerById } from '../../shared/providers';
 
 interface Props {
   onLoad: () => Promise<Settings>;
@@ -9,8 +9,6 @@ interface Props {
 
 export function SettingsView({ onLoad, onSave }: Props) {
   const [s, setS] = useState<Settings | null>(null);
-  const [models, setModels] = useState<string[]>([]);
-  const [loadingModels, setLoadingModels] = useState(false);
 
   useEffect(() => {
     void onLoad().then(setS);
@@ -18,77 +16,93 @@ export function SettingsView({ onLoad, onSave }: Props) {
 
   if (!s) return <p className="empty">Loading…</p>;
 
-  const save = async () => {
-    await onSave(s);
+  const provider = providerById(s.providerId);
+  const custom = provider.id === 'custom';
+  // Keep a saved model that isn't curated (migrated value) so it is never lost —
+  // it just shows as "(current)" above the curated list.
+  const offList = Boolean(s.model) && !provider.models.includes(s.model);
+
+  const selectProvider = (id: string) => {
+    const p = providerById(id);
+    // Switching Provider resets Model to the new Provider's default when the
+    // current Model isn't in its curated list.
+    const model = p.models.includes(s.model) ? s.model : (p.models[0] ?? '');
+    setS({ ...s, providerId: id, model });
   };
 
-  const loadModels = async () => {
-    if (!s.llmBaseUrl.trim()) return;
-    setLoadingModels(true);
-    try {
-      // The saved key is used when the field is untouched (type=password keeps
-      // it masked but present); otherwise whatever the user just typed.
-      const key = s.llmApiKey || undefined;
-      const list = await fetchAvailableModels(s.llmBaseUrl, key);
-      setModels(list);
-      if (list.length > 0 && !list.includes(s.llmModel.trim()) && !s.llmModel.includes(',')) {
-        // Keep the current model selected even if not in list — user may know better.
-      }
-    } finally {
-      setLoadingModels(false);
+  const setKey = (v: string) => {
+    if (custom) {
+      setS({ ...s, customApiKey: v });
+    } else {
+      setS({ ...s, keys: { ...s.keys, [provider.id]: v } });
     }
+  };
+
+  const save = async () => {
+    await onSave(s);
   };
 
   return (
     <div className="settings">
       <section className="card">
-        <h2>AI endpoint</h2>
+        <h2>AI provider</h2>
         <p className="hint">
-          Defaults to NVIDIA's API (key injected from .env at build time). Any OpenAI-compatible
-          endpoint works too: OpenAI, a local Ollama / vLLM / SGLang server, LM Studio…
+          Pick a Provider and one of its curated Models. Keys are stored per Provider, in your browser only.
+          An empty key is seeded from <code>VITE_&lt;PROVIDER&gt;_API_KEY</code> in <code>.env</code> at build time;
+          anything saved here wins afterwards.
         </p>
         <label className="field">
-          <span className="field-label">Base URL</span>
-          <input
-            value={s.llmBaseUrl}
-            onChange={(e) => { setS({ ...s, llmBaseUrl: e.target.value }); }}
-            placeholder="https://api.openai.com/v1  ·  http://localhost:11434/v1"
-          />
+          <span className="field-label">Provider</span>
+          <select value={s.providerId} onChange={(e) => selectProvider(e.target.value)}>
+            {PROVIDERS.map((p) => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </select>
         </label>
-        <label className="field">
-          <span className="field-label">Model</span>
-          {models.length > 0 ? (
-            <>
-              <select
-                value={models.includes(s.llmModel.trim()) || s.llmModel.includes(',') ? s.llmModel : ''}
-                onChange={(e) => { setS({ ...s, llmModel: e.target.value }); }}
-              >
-                {!models.includes(s.llmModel.trim()) && !s.llmModel.includes(',') && (
-                  <option value="">— pick a model —</option>
-                )}
-                {models.map((m) => (
+
+        {custom ? (
+          <>
+            <label className="field">
+              <span className="field-label">Endpoint</span>
+              <input
+                value={s.customEndpoint}
+                onChange={(e) => { setS({ ...s, customEndpoint: e.target.value }); }}
+                placeholder="http://localhost:11434/v1"
+              />
+            </label>
+            <label className="field">
+              <span className="field-label">Model</span>
+              <input
+                value={s.model}
+                onChange={(e) => { setS({ ...s, model: e.target.value }); }}
+                placeholder="gpt-4o-mini · llama3.1 · mistral…"
+              />
+            </label>
+          </>
+        ) : (
+          <>
+            <label className="field">
+              <span className="field-label">Endpoint</span>
+              <input readOnly value={provider.endpoint} />
+            </label>
+            <label className="field">
+              <span className="field-label">Model</span>
+              <select value={s.model} onChange={(e) => { setS({ ...s, model: e.target.value }); }}>
+                {offList && <option value={s.model}>{s.model} (current)</option>}
+                {provider.models.map((m) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>
-              <span className="hint">{models.length} models from your endpoint.</span>
-            </>
-          ) : (
-            <input
-              value={s.llmModel}
-              onChange={(e) => { setS({ ...s, llmModel: e.target.value }); }}
-              placeholder="gpt-4o-mini · llama3.1 · mistral…"
-            />
-          )}
-        </label>
-        <button className="btn-link" onClick={() => void loadModels()} disabled={loadingModels}>
-          {loadingModels ? 'Fetching models…' : models.length > 0 ? '↻ Refresh model list' : 'Fetch available models'}
-        </button>
+            </label>
+          </>
+        )}
+
         <label className="field">
-          <span className="field-label">API key (optional for local servers)</span>
+          <span className="field-label">API key {provider.keyOptional ? '(optional for local servers)' : ''}</span>
           <input
             type="password"
-            value={s.llmApiKey}
-            onChange={(e) => { setS({ ...s, llmApiKey: e.target.value }); }}
+            value={custom ? s.customApiKey : (s.keys[provider.id] ?? '')}
+            onChange={(e) => setKey(e.target.value)}
             placeholder="sk-…"
           />
         </label>
@@ -97,7 +111,7 @@ export function SettingsView({ onLoad, onSave }: Props) {
       <section className="card">
         <h2>Privacy</h2>
         <ul className="hint-list">
-          <li>Your profile never leaves this browser except to the endpoint above.</li>
+          <li>Your profile never leaves this browser except to the provider's endpoint above.</li>
           <li>Only normalized field questions — never raw HTML — are sent for ambiguous fields.</li>
           <li>Sensitive fields (passwords, card numbers, government IDs…) are never filled or sent anywhere.</li>
         </ul>

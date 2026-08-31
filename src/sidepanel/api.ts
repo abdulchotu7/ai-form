@@ -1,5 +1,6 @@
 import type { ContentRequest, DetectResponse, FillResult, Profile } from '../shared/types';
-import { emptyProfile, emptySettings, ProfileSchema, SettingsSchema } from '../shared/schema';
+import { emptyProfile, emptySettings, ProfileSchema } from '../shared/schema';
+import { migrateSettings } from '../shared/providers';
 
 /** chrome.* wrappers — the only place the side panel touches extension APIs. */
 
@@ -19,8 +20,9 @@ export async function saveProfile(profile: Profile): Promise<void> {
 }
 
 export async function loadSettings() {
-  const parsed = SettingsSchema.safeParse(await storageGet<unknown>('settings'));
-  return parsed.success ? parsed.data : emptySettings();
+  // migrateSettings handles legacy `{ llmBaseUrl, llmApiKey, llmModel }` storage
+  // (infer Provider / fall back to Custom) plus VITE_<PROVIDER>_API_KEY seeding.
+  return migrateSettings(await storageGet<unknown>('settings'));
 }
 
 export async function saveSettings(settings: ReturnType<typeof emptySettings>): Promise<void> {
