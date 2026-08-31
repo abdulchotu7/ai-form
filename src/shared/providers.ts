@@ -134,6 +134,11 @@ function migrateLegacy(raw: unknown): Settings {
   return { ...base, providerId: 'custom', model, customEndpoint: baseUrl, customApiKey: apiKey };
 }
 
+/** Union of curated + live, deduped and sorted. Pure helper for the model picker. */
+export function mergeModels(curated: string[], live: string[]): string[] {
+  return [...new Set([...curated, ...live])].sort((a, b) => a.localeCompare(b));
+}
+
 /** The actual LLM config a fill uses: provider endpoint, per-provider key, single model. */
 export function resolveLlmConfig(s: Settings): LlmConfig {
   if (s.providerId === 'custom') {

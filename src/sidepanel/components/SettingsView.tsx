@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Settings } from '../../shared/types';
-import { PROVIDERS, providerById } from '../../shared/providers';
+import { PROVIDERS, providerById, mergeModels, resolveLlmConfig } from '../../shared/providers';
 
 interface Props {
   onLoad: () => Promise<Settings>;
@@ -9,6 +9,10 @@ interface Props {
 
 export function SettingsView({ onLoad, onSave }: Props) {
   const [s, setS] = useState<Settings | null>(null);
+  const [liveByProvider, setLiveByProvider] = useState<Record<string, string[]>>({});
+  const [fetching, setFetching] = useState(false);
+  const [fetchMsg, setFetchMsg] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     void onLoad().then(setS);
@@ -18,16 +22,18 @@ export function SettingsView({ onLoad, onSave }: Props) {
 
   const provider = providerById(s.providerId);
   const custom = provider.id === 'custom';
-  // Keep a saved model that isn't curated (migrated value) so it is never lost —
-  // it just shows as "(current)" above the curated list.
-  const offList = Boolean(s.model) && !provider.models.includes(s.model);
+  const live = liveByProvider[provider.id] ?? [];
+  const merged = mergeModels(provider.models, live);
+  const showOffList = Boolean(s.model) && !merged.includes(s.model);
 
   const selectProvider = (id: string) => {
     const p = providerById(id);
-    // Switching Provider resets Model to the new Provider's default when the
-    // current Model isn't in its curated list.
-    const model = p.models.includes(s.model) ? s.model : (p.models[0] ?? '');
+    const targetLive = liveByProvider[id] ?? [];
+    const targetMerged = mergeModels(p.models, targetLive);
+    const model = targetMerged.includes(s.model) ? s.model : (p.models[0] ?? targetLive[0] ?? '');
     setS({ ...s, providerId: id, model });
+    setFetchMsg(null);
+    setFetchError(null);
   };
 
   const setKey = (v: string) => {
@@ -41,6 +47,52 @@ export function SettingsView({ onLoad, onSave }: Props) {
   const save = async () => {
     await onSave(s);
   };
+
+  const fetchModels = async () => {
+    if (!s) return;
+    const cfg = resolveLlmConfig(s);
+    const endpoint = cfg.baseUrl.trim();
+    if (!endpoint) {
+      setFetchError('Enter an endpoint first.');
+      setFetchMsg(null);
+      return;
+    }
+    setFetching(true);
+    setFetchMsg(null);
+    setFetchError(null);
+    try {
+      const url = `${endpoint.replace(/\/+$/, '')}/models`;
+      const headers: Record<string, string> = {};
+      if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
+      const res = await fetch(url, {
+        headers,
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data: unknown = await res.json();
+      const ids = Array.isArray((data as { data?: unknown })?.data)
+        ? ((data as { data: { id?: unknown }[] }).data)
+            .map((m) => String(m?.id ?? '').trim())
+            .filter(Boolean)
+        : [];
+      const deduped = [...new Set(ids)].sort((a, b) => a.localeCompare(b));
+      setLiveByProvider((prev) => ({ ...prev, [provider.id]: deduped }));
+      if (deduped.length === 0) {
+        setFetchMsg('No additional models found — curated list still available.');
+      } else {
+        setFetchMsg(`Found ${deduped.length} models — merged with curated list.`);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'network error';
+      setFetchError(`Could not fetch models (${msg}) — curated models still available.`);
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const hasEndpoint = custom ? Boolean(s.customEndpoint.trim()) : Boolean(provider.endpoint);
 
   return (
     <div className="settings">
@@ -70,14 +122,26 @@ export function SettingsView({ onLoad, onSave }: Props) {
                 placeholder="http://localhost:11434/v1"
               />
             </label>
-            <label className="field">
-              <span className="field-label">Model</span>
-              <input
-                value={s.model}
-                onChange={(e) => { setS({ ...s, model: e.target.value }); }}
-                placeholder="gpt-4o-mini · llama3.1 · mistral…"
-              />
-            </label>
+            {live.length > 0 ? (
+              <label className="field">
+                <span className="field-label">Model</span>
+                <select value={s.model} onChange={(e) => { setS({ ...s, model: e.target.value }); }}>
+                  {showOffList && <option value={s.model}>{s.model} (current)</option>}
+                  {merged.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="field">
+                <span className="field-label">Model</span>
+                <input
+                  value={s.model}
+                  onChange={(e) => { setS({ ...s, model: e.target.value }); }}
+                  placeholder="gpt-4o-mini · llama3.1 · mistral…"
+                />
+              </label>
+            )}
           </>
         ) : (
           <>
@@ -87,14 +151,26 @@ export function SettingsView({ onLoad, onSave }: Props) {
             <label className="field">
               <span className="field-label">Model</span>
               <select value={s.model} onChange={(e) => { setS({ ...s, model: e.target.value }); }}>
-                {offList && <option value={s.model}>{s.model} (current)</option>}
-                {provider.models.map((m) => (
+                {showOffList && <option value={s.model}>{s.model} (current)</option>}
+                {merged.map((m) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>
             </label>
           </>
         )}
+
+        <div style={{ margin: '8px 0' }}>
+          <button
+            className="btn"
+            onClick={() => void fetchModels()}
+            disabled={fetching || !hasEndpoint}
+          >
+            {fetching ? 'Fetching models…' : 'Fetch available Models'}
+          </button>
+          {fetchMsg && <p className="hint" role="status" style={{ marginTop: 6 }}>{fetchMsg}</p>}
+          {fetchError && <p className="hint" role="status" style={{ marginTop: 6 }}>{fetchError}</p>}
+        </div>
 
         <label className="field">
           <span className="field-label">API key {provider.keyOptional ? '(optional for local servers)' : ''}</span>
