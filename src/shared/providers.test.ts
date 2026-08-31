@@ -11,7 +11,7 @@ function field(partial: Partial<FieldDescriptor>): FieldDescriptor {
 }
 
 describe('PROVIDERS registry', () => {
-  it('contains exactly the five providers, in order', () => {
+  it('contains the providers in order', () => {
     expect(PROVIDERS.map((p) => p.id)).toEqual(['openai', 'groq', 'nvidia', 'ollama', 'custom']);
   });
 

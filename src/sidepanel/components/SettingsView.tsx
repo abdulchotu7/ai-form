@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Settings } from '../../shared/types';
 import { PROVIDERS, providerById, mergeModels, resolveLlmConfig } from '../../shared/providers';
+import { loadLiveModels, saveLiveModels } from '../api';
 
 interface Props {
   onLoad: () => Promise<Settings>;
@@ -15,7 +16,16 @@ export function SettingsView({ onLoad, onSave }: Props) {
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
-    void onLoad().then(setS);
+    void (async () => {
+      const settings = await onLoad();
+      setS(settings);
+      try {
+        const lm = await loadLiveModels();
+        if (lm && typeof lm === 'object') setLiveByProvider(lm);
+      } catch {
+        // no chrome in tests — keep empty cache
+      }
+    })();
   }, [onLoad]);
 
   if (!s) return <p className="empty">Loading…</p>;
@@ -50,6 +60,8 @@ export function SettingsView({ onLoad, onSave }: Props) {
 
   const fetchModels = async () => {
     if (!s) return;
+    const capturedProvider = providerById(s.providerId);
+    const capturedModel = s.model;
     const cfg = resolveLlmConfig(s);
     const endpoint = cfg.baseUrl.trim();
     if (!endpoint) {
@@ -78,7 +90,14 @@ export function SettingsView({ onLoad, onSave }: Props) {
             .filter(Boolean)
         : [];
       const deduped = [...new Set(ids)].sort((a, b) => a.localeCompare(b));
-      setLiveByProvider((prev) => ({ ...prev, [provider.id]: deduped }));
+      const nextLive = { ...liveByProvider, [capturedProvider.id]: deduped };
+      setLiveByProvider(nextLive);
+      void saveLiveModels(nextLive);
+      const mergedAfter = mergeModels(capturedProvider.models, deduped);
+      if (capturedModel && !mergedAfter.includes(capturedModel)) {
+        const fallback = capturedProvider.models[0] ?? '';
+        setS((prev) => (prev ? { ...prev, model: fallback } : prev));
+      }
       if (deduped.length === 0) {
         setFetchMsg('No additional models found — curated list still available.');
       } else {
@@ -87,6 +106,26 @@ export function SettingsView({ onLoad, onSave }: Props) {
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'network error';
       setFetchError(`Could not fetch models (${msg}) — curated models still available.`);
+      // Clear live cache for this provider so picker falls back to curated
+      setLiveByProvider((prev) => {
+        const next = { ...prev };
+        delete next[capturedProvider.id];
+        return next;
+      });
+      try {
+        const current = await loadLiveModels();
+        const nextSave = { ...current };
+        delete nextSave[capturedProvider.id];
+        await saveLiveModels(nextSave);
+      } catch {
+        // swallow — storage may be unavailable in tests
+      }
+      // If the selected model was live-only, it is now retired → reset to default curated
+      const curatedOnly = capturedProvider.models;
+      if (capturedModel && !curatedOnly.includes(capturedModel)) {
+        const fallback = curatedOnly[0] ?? '';
+        setS((prev) => (prev && !curatedOnly.includes(prev.model) ? { ...prev, model: fallback } : prev));
+      }
     } finally {
       setFetching(false);
     }

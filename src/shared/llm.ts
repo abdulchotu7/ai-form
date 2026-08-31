@@ -268,6 +268,7 @@ async function requestBatchWithModel(
   model: string,
   hints?: Map<string, string>,
 ): Promise<Map<string, Suggestion>> {
+  let lastDetail = '';
   for (let attempt = 0; attempt < 2; attempt++) {
     let body: Record<string, unknown> = {
       model,
@@ -312,6 +313,19 @@ async function requestBatchWithModel(
       signal: AbortSignal.timeout(90_000),
     });
     if (!res.ok) {
+      // Try to surface the provider's error message (e.g. model_not_found)
+      // so the user sees *why* it failed instead of a bare HTTP status.
+      let detail = '';
+      try {
+        const body = await res.clone().json() as { error?: unknown };
+        const e = body?.error;
+        if (typeof e === 'string') detail = e;
+        else if (e && typeof e === 'object' && 'message' in e) detail = String((e as { message: unknown }).message);
+        else if (e && typeof e === 'object') detail = JSON.stringify(e).slice(0, 300);
+      } catch {
+        try { detail = (await res.clone().text()).slice(0, 300); } catch { /* ignore */ }
+      }
+      const msg = detail ? `${detail} (HTTP ${res.status})` : `LLM request failed: HTTP ${res.status}`;
       // 400: some servers reject response_format. 429: free-tier rate limits
       // (Groq's is per-minute tokens) — wait out the server's own retry hint,
       // then one patient retry. 5xx: cold queues, worth the same retry.
@@ -320,10 +334,13 @@ async function requestBatchWithModel(
           const retryHint = Number(res.headers.get('retry-after'));
           const wait = Number.isFinite(retryHint) && retryHint > 0 ? retryHint * 1000 : RETRY_BACKOFF_MS.value;
           await new Promise((r) => setTimeout(r, Math.min(wait, 60_000)));
+        } else {
+          // For 400, keep the detail for the final error — don't swallow it.
+          lastDetail = msg;
         }
         continue;
       }
-      throw new Error(`LLM request failed: HTTP ${res.status}`);
+      throw new Error(lastDetail || msg);
     }
     const data = await res.json();
     const content: string = data?.choices?.[0]?.message?.content ?? '';

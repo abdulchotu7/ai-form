@@ -5,8 +5,32 @@ import { migrateSettings } from '../shared/providers';
 /** chrome.* wrappers — the only place the side panel touches extension APIs. */
 
 async function storageGet<T>(key: string): Promise<T | undefined> {
-  const res = await chrome.storage.local.get(key);
-  return res[key] as T | undefined;
+  try {
+    const res = await (globalThis as unknown as { chrome?: typeof chrome }).chrome?.storage.local.get(key);
+    return res?.[key] as T | undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export type LiveModels = Record<string, string[]>;
+
+export async function loadLiveModels(): Promise<LiveModels> {
+  const raw = await storageGet<unknown>('liveModels');
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: LiveModels = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (Array.isArray(v)) out[k] = v.filter((x) => typeof x === 'string') as string[];
+  }
+  return out;
+}
+
+export async function saveLiveModels(models: LiveModels): Promise<void> {
+  try {
+    await (globalThis as unknown as { chrome?: typeof chrome }).chrome?.storage.local.set({ liveModels: models });
+  } catch {
+    // no chrome in tests — swallow
+  }
 }
 
 export async function loadProfile(): Promise<Profile> {
@@ -16,7 +40,9 @@ export async function loadProfile(): Promise<Profile> {
 }
 
 export async function saveProfile(profile: Profile): Promise<void> {
-  await chrome.storage.local.set({ profile });
+  try {
+    await (globalThis as unknown as { chrome?: typeof chrome }).chrome?.storage.local.set({ profile });
+  } catch { /* no chrome in tests */ }
 }
 
 export async function loadSettings() {
@@ -26,7 +52,9 @@ export async function loadSettings() {
 }
 
 export async function saveSettings(settings: ReturnType<typeof emptySettings>): Promise<void> {
-  await chrome.storage.local.set({ settings });
+  try {
+    await (globalThis as unknown as { chrome?: typeof chrome }).chrome?.storage.local.set({ settings });
+  } catch { /* no chrome in tests */ }
 }
 
 async function activeTab(): Promise<chrome.tabs.Tab> {
