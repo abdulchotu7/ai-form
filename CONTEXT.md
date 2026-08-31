@@ -21,3 +21,6 @@ _Avoid_: context, user data
 
 **Suggestion**: A validated fill value for one detected field, returned by the LLM with a confidence score. Only text fields are suggested; sensitive fields are never suggested.
 _Avoid_: hint, completion
+
+**Live Model Cache**: A per-Provider persisted list of Models discovered via `GET /models` at a Provider's Endpoint, stored separately from curated Models. The cache is the union of curated and live Models shown in the Model picker.
+_Avoid_: fetched models, dynamic models
