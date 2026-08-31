@@ -137,7 +137,7 @@ function migrateLegacy(raw: unknown): Settings {
 /** The actual LLM config a fill uses: provider endpoint, per-provider key, single model. */
 export function resolveLlmConfig(s: Settings): LlmConfig {
   if (s.providerId === 'custom') {
-    return { baseUrl: s.customEndpoint, apiKey: s.customApiKey, model: s.model };
+    return { baseUrl: s.customEndpoint, apiKey: s.customApiKey, model: s.model, providerId: "custom" };
   }
-  return { baseUrl: providerById(s.providerId).endpoint, apiKey: s.keys[s.providerId] ?? '', model: s.model };
+  return { baseUrl: providerById(s.providerId).endpoint, apiKey: s.keys[s.providerId] ?? '', model: s.model, providerId: s.providerId };
 }

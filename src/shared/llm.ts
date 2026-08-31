@@ -16,6 +16,16 @@ export interface LlmConfig {
    *  returning 429 after its patient retry (free-tier per-model caps, e.g.
    *  Groq), the next spare is tried with the same fields. */
   model: string;
+  /** Provider identity that produced this config (for pacing decisions). */
+  providerId?: string;
+}
+
+/** Validate that Provider and Model are present before a fill. Returns a
+ *  human-readable message or null when valid. */
+export function validateLlmConfig(config: LlmConfig): string | null {
+  if (!config.baseUrl) return 'Select a Provider in Settings before filling — missing endpoint.';
+  if (!config.model) return 'Select a Model in Settings before filling — missing model.';
+  return null;
 }
 
 const SYSTEM_PROMPT = `You are a form-filling assistant. You receive:
@@ -142,9 +152,12 @@ export function splitBatches(fields: FieldDescriptor[]): FieldDescriptor[][] {
  *  There we pace requests AND rotate across the model list — each model draws
  *  from its own limit, which multiplies effective throughput. Other providers
  *  run parallel with a single model. */
-export function needsPacing(baseUrl: string): boolean {
+export function needsPacing(providerIdOrUrl: string): boolean {
+  // Provider identity takes precedence — after the registry move the raw URL
+  // is derived from the provider, so groq pacing must survive provider switches.
+  if (providerIdOrUrl === 'groq') return true;
   try {
-    return /(^|\.)groq\.com$/i.test(new URL(baseUrl).hostname);
+    return /(^|\.)groq\.com$/i.test(new URL(providerIdOrUrl).hostname);
   } catch {
     return false;
   }
@@ -184,7 +197,9 @@ export async function suggestWithLlm(
   hints?: Map<string, string>,
 ): Promise<SuggestResult> {
   const out: SuggestResult = { suggestions: new Map(), errors: [] };
-  if (!config.baseUrl || !config.model || fields.length === 0) return out;
+  if (fields.length === 0) return out;
+  const validation = validateLlmConfig(config);
+  if (validation) throw new Error(validation);
 
   const known = new Set(fields.map((f) => f.id));
   // Short-answer fields go out as few big requests; textareas (narrative
@@ -193,7 +208,7 @@ export async function suggestWithLlm(
   // never tripped by concurrency; everyone else runs fully parallel. A 429
   // still triggers the patient retry inside requestBatch either way.
   const chunks = splitBatches(fields);
-  const paced = needsPacing(config.baseUrl);
+  const paced = needsPacing(config.providerId ?? config.baseUrl);
   let rotated = 0;
   const runChunk = (chunk: FieldDescriptor[]): Promise<void> =>
     requestBatch(chunk, profile, config, pageContext, known, hints).then(({ suggestions: result, usedSpare }) => {

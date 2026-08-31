@@ -81,10 +81,9 @@ export function SettingsView({ onLoad, onSave }: Props) {
           </>
         ) : (
           <>
-            <label className="field">
-              <span className="field-label">Endpoint</span>
-              <input readOnly value={provider.endpoint} />
-            </label>
+            <p className="hint endpoint-hint" style={{ marginBottom: 12 }}>
+              Endpoint: <code>{provider.endpoint}</code>
+            </p>
             <label className="field">
               <span className="field-label">Model</span>
               <select value={s.model} onChange={(e) => { setS({ ...s, model: e.target.value }); }}>
@@ -103,7 +102,7 @@ export function SettingsView({ onLoad, onSave }: Props) {
             type="password"
             value={custom ? s.customApiKey : (s.keys[provider.id] ?? '')}
             onChange={(e) => setKey(e.target.value)}
-            placeholder="sk-…"
+            placeholder={provider.keyOptional ? 'optional — leave empty for local' : 'sk-…'}
           />
         </label>
       </section>

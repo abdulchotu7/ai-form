@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { suggestWithLlm, fetchAvailableModels, BATCH_GAP_MS, RETRY_BACKOFF_MS } from './llm';
+import { suggestWithLlm, fetchAvailableModels, needsPacing, validateLlmConfig, BATCH_GAP_MS, RETRY_BACKOFF_MS } from './llm';
 import type { FieldDescriptor, Profile } from './types';
 import { emptyProfile } from './schema';
 
@@ -138,14 +138,23 @@ describe('suggestWithLlm', () => {
     }) as typeof setTimeout);
     try {
       const shorts = Array.from({ length: 13 }, (_, i) => field({ id: `p${i}`, name: `n${i}` }));
-      await suggestWithLlm(shorts, profile, { ...config, baseUrl: 'https://api.groq.com/openai/v1' });
+      // Provider identity (groq) paces even when baseUrl is generic — registry move
+      await suggestWithLlm(shorts, profile, { ...config, baseUrl: 'https://api.groq.com/openai/v1', providerId: 'groq' });
       expect(f).toHaveBeenCalledTimes(2); // 13 > SHORT_BATCH_SIZE
       expect(sleeps.filter((ms) => ms === BATCH_GAP_MS)).toHaveLength(1);
 
+      // Also paces when providerId is groq even if endpoint is custom groq-like host
       f.mockClear();
       sleeps.length = 0;
-      await suggestWithLlm(shorts, profile, config); // non-paced endpoint
+      expect(needsPacing('groq')).toBe(true);
+      expect(needsPacing('https://api.groq.com/openai/v1')).toBe(true);
+
+      f.mockClear();
+      sleeps.length = 0;
+      await suggestWithLlm(shorts, profile, config); // non-paced endpoint (test-model providerId undefined, non-groq host)
       expect(sleeps.filter((ms) => ms === BATCH_GAP_MS)).toHaveLength(0);
+      expect(needsPacing('nvidia')).toBe(false);
+      expect(needsPacing('openai')).toBe(false);
     } finally {
       vi.unstubAllGlobals();
       RETRY_BACKOFF_MS.value = 30_000;
@@ -184,11 +193,26 @@ describe('suggestWithLlm', () => {
     expect(await fetchAvailableModels('http://llm.test/v1')).toEqual([]);
   });
 
-  it('returns empty without any network call when unconfigured', async () => {
+  it('fails early with clear validation when Provider or Model missing (no network call)', async () => {
     const f = vi.fn();
     vi.stubGlobal('fetch', f);
-    const out = (await suggestWithLlm([field({ id: 'f1' })], profile, { baseUrl: '', apiKey: '', model: '' })).suggestions;
-    expect(out.size).toBe(0);
+    await expect(suggestWithLlm([field({ id: 'f1' })], profile, { baseUrl: '', apiKey: '', model: '' })).rejects.toThrow(/Provider/);
     expect(f).not.toHaveBeenCalled();
+    await expect(suggestWithLlm([field({ id: 'f1' })], profile, { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-x', model: '' })).rejects.toThrow(/Model/);
+    expect(f).not.toHaveBeenCalled();
+    expect(validateLlmConfig({ baseUrl: '', apiKey: '', model: '' })).toMatch(/Provider/);
+    expect(validateLlmConfig({ baseUrl: 'https://api.openai.com/v1', apiKey: 'x', model: '' })).toMatch(/Model/);
+    expect(validateLlmConfig({ baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-4o-mini' })).toBeNull();
+  });
+
+  it('Ollama with empty API key does not send Authorization header', async () => {
+    const f = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: '{"suggestions":[]}' } }] })),
+    );
+    vi.stubGlobal('fetch', f);
+    await suggestWithLlm([field({ id: 'f1' })], profile, { baseUrl: 'http://localhost:11434/v1', apiKey: '', model: 'llama3.1', providerId: 'ollama' });
+    expect(f).toHaveBeenCalledTimes(1);
+    const [, init] = f.mock.calls[0];
+    expect((init as RequestInit).headers).not.toHaveProperty('Authorization');
   });
 });

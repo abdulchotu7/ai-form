@@ -93,7 +93,7 @@ describe('migrateSettings', () => {
 describe('resolveLlmConfig', () => {
   it('uses the curated endpoint and per-provider key', () => {
     const cfg = resolveLlmConfig({ ...emptySettings(), providerId: 'groq', model: 'allam-2-7b', keys: { groq: 'g-key' } });
-    expect(cfg).toEqual({ baseUrl: 'https://api.groq.com/openai/v1', apiKey: 'g-key', model: 'allam-2-7b' });
+    expect(cfg).toEqual({ baseUrl: 'https://api.groq.com/openai/v1', apiKey: 'g-key', model: 'allam-2-7b', providerId: 'groq' });
   });
 
   it('uses customEndpoint/customApiKey for the custom provider', () => {
@@ -102,9 +102,9 @@ describe('resolveLlmConfig', () => {
       providerId: 'custom',
       model: 'my-model',
       customEndpoint: 'http://localhost:11434/v1',
-      customApiKey: 'ck',
+      customApiKey: 'ck-1',
     });
-    expect(cfg).toEqual({ baseUrl: 'http://localhost:11434/v1', apiKey: 'ck', model: 'my-model' });
+    expect(cfg).toEqual({ baseUrl: 'http://localhost:11434/v1', apiKey: 'ck-1', model: 'my-model', providerId: 'custom' });
   });
 
   it('default settings resolve to the NVIDIA endpoint and default model', () => {
