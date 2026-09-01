@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Settings } from '../../shared/types';
-import { PROVIDERS, providerById, mergeModels, resolveLlmConfig } from '../../shared/providers';
+import { PROVIDERS, providerById, mergeModels, resolveLlmConfig, extractModelIds } from '../../shared/providers';
 import { loadLiveModels, saveLiveModels } from '../api';
 
 interface Props {
@@ -28,6 +28,16 @@ export function SettingsView({ onLoad, onSave }: Props) {
     })();
   }, [onLoad]);
 
+  useEffect(() => {
+    if (!s) return;
+    const provider = providerById(s.providerId);
+    const live = liveByProvider[provider.id] ?? [];
+    const merged = mergeModels(provider.models, live);
+    if (!s.model && merged.length > 0) {
+      setS((prev) => (prev && !prev.model ? { ...prev, model: merged[0] } : prev));
+    }
+  }, [s?.providerId, s?.model, liveByProvider]);
+
   if (!s) return <p className="empty">Loading…</p>;
 
   const provider = providerById(s.providerId);
@@ -40,7 +50,14 @@ export function SettingsView({ onLoad, onSave }: Props) {
     const p = providerById(id);
     const targetLive = liveByProvider[id] ?? [];
     const targetMerged = mergeModels(p.models, targetLive);
-    const model = targetMerged.includes(s.model) ? s.model : (p.models[0] ?? targetLive[0] ?? '');
+    let model = s.model;
+    if (!targetMerged.includes(s.model)) {
+      if (p.id === 'custom') {
+        model = targetLive[0] ?? s.model ?? '';
+      } else {
+        model = p.models[0] ?? targetLive[0] ?? '';
+      }
+    }
     setS({ ...s, providerId: id, model });
     setFetchMsg(null);
     setFetchError(null);
@@ -84,19 +101,21 @@ export function SettingsView({ onLoad, onSave }: Props) {
         throw new Error(`HTTP ${res.status}`);
       }
       const data: unknown = await res.json();
-      const ids = Array.isArray((data as { data?: unknown })?.data)
-        ? ((data as { data: { id?: unknown }[] }).data)
-            .map((m) => String(m?.id ?? '').trim())
-            .filter(Boolean)
-        : [];
-      const deduped = [...new Set(ids)].sort((a, b) => a.localeCompare(b));
+      const deduped = extractModelIds(data);
       const nextLive = { ...liveByProvider, [capturedProvider.id]: deduped };
       setLiveByProvider(nextLive);
       void saveLiveModels(nextLive);
       const mergedAfter = mergeModels(capturedProvider.models, deduped);
-      if (capturedModel && !mergedAfter.includes(capturedModel)) {
-        const fallback = capturedProvider.models[0] ?? '';
-        setS((prev) => (prev ? { ...prev, model: fallback } : prev));
+      let targetModel = capturedModel;
+      if (!capturedModel || !mergedAfter.includes(capturedModel)) {
+        if (capturedProvider.id === 'custom') {
+          targetModel = deduped[0] ?? capturedModel ?? '';
+        } else {
+          targetModel = capturedProvider.models[0] ?? deduped[0] ?? '';
+        }
+      }
+      if (targetModel !== capturedModel) {
+        setS((prev) => (prev ? { ...prev, model: targetModel } : prev));
       }
       if (deduped.length === 0) {
         setFetchMsg('No additional models found — curated list still available.');
@@ -121,10 +140,12 @@ export function SettingsView({ onLoad, onSave }: Props) {
         // swallow — storage may be unavailable in tests
       }
       // If the selected model was live-only, it is now retired → reset to default curated
-      const curatedOnly = capturedProvider.models;
-      if (capturedModel && !curatedOnly.includes(capturedModel)) {
-        const fallback = curatedOnly[0] ?? '';
-        setS((prev) => (prev && !curatedOnly.includes(prev.model) ? { ...prev, model: fallback } : prev));
+      if (capturedProvider.id !== 'custom') {
+        const curatedOnly = capturedProvider.models;
+        if (capturedModel && !curatedOnly.includes(capturedModel)) {
+          const fallback = curatedOnly[0] ?? '';
+          setS((prev) => (prev && !curatedOnly.includes(prev.model) ? { ...prev, model: fallback } : prev));
+        }
       }
     } finally {
       setFetching(false);
@@ -165,6 +186,7 @@ export function SettingsView({ onLoad, onSave }: Props) {
               <label className="field">
                 <span className="field-label">Model</span>
                 <select value={s.model} onChange={(e) => { setS({ ...s, model: e.target.value }); }}>
+                  {!s.model && <option value="" disabled>Select a model…</option>}
                   {showOffList && <option value={s.model}>{s.model} (current)</option>}
                   {merged.map((m) => (
                     <option key={m} value={m}>{m}</option>
@@ -190,6 +212,7 @@ export function SettingsView({ onLoad, onSave }: Props) {
             <label className="field">
               <span className="field-label">Model</span>
               <select value={s.model} onChange={(e) => { setS({ ...s, model: e.target.value }); }}>
+                {!s.model && <option value="" disabled>Select a model…</option>}
                 {showOffList && <option value={s.model}>{s.model} (current)</option>}
                 {merged.map((m) => (
                   <option key={m} value={m}>{m}</option>

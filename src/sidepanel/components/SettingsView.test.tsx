@@ -34,7 +34,7 @@ function getSelectOptions(container: Element): string[] {
   const selects = container.querySelectorAll('select');
   for (const s of Array.from(selects)) {
     const opts = Array.from(s.options).map((o) => o.value);
-    if (opts.includes('openai') && opts.includes('groq')) continue;
+    if (opts.includes('groq') && opts.includes('nvidia')) continue;
     return opts;
   }
   return [];
@@ -50,7 +50,7 @@ describe('SettingsView live model discovery', () => {
       ...emptySettings(),
       providerId: 'groq',
       model: 'llama-3.1-8b-instant',
-      keys: { groq: 'groq-secret', nvidia: 'nvidia-secret', openai: 'openai-secret' },
+      keys: { groq: 'groq-secret', nvidia: 'nvidia-secret' },
     };
     const { container } = await renderSettings(initial);
     const btn = Array.from(container.querySelectorAll('button')).find((b) =>
@@ -76,9 +76,9 @@ describe('SettingsView live model discovery', () => {
     );
     const initial: Settings = {
       ...emptySettings(),
-      providerId: 'openai',
-      model: 'gpt-4o-mini',
-      keys: { openai: 'k' },
+      providerId: 'groq',
+      model: 'llama-3.1-8b-instant',
+      keys: { groq: 'k' },
     };
     const { container } = await renderSettings(initial);
     const btn = Array.from(container.querySelectorAll('button')).find((b) =>
@@ -96,7 +96,7 @@ describe('SettingsView live model discovery', () => {
     const modelSelect = Array.from(container.querySelectorAll('select')).find((s) =>
       Array.from(s.options).some((o) => o.value === 'live-a'),
     ) as HTMLSelectElement;
-    expect(modelSelect.value).toBe('gpt-4o-mini');
+    expect(modelSelect.value).toBe('llama-3.1-8b-instant');
   });
 
   it('keeps current selection as hint when not in curated or live', async () => {
@@ -107,9 +107,9 @@ describe('SettingsView live model discovery', () => {
     );
     const initial: Settings = {
       ...emptySettings(),
-      providerId: 'openai',
+      providerId: 'groq',
       model: 'my-legacy-model',
-      keys: { openai: 'k' },
+      keys: { groq: 'k' },
     };
     const { container } = await renderSettings(initial);
     const btn = Array.from(container.querySelectorAll('button')).find((b) =>
@@ -123,9 +123,9 @@ describe('SettingsView live model discovery', () => {
     // Retired: my-legacy-model not in merged (curated ∪ live-new) → should NOT linger as (current)
     expect(opts).not.toContain('my-legacy-model');
     const modelSelect = Array.from(container.querySelectorAll('select')).find((s) =>
-      Array.from(s.options).some((o) => o.value === 'gpt-4o-mini'),
+      Array.from(s.options).some((o) => o.value === 'openai/gpt-oss-20b'),
     ) as HTMLSelectElement;
-    expect(modelSelect.value).toBe('gpt-4o-mini');
+    expect(modelSelect.value).toBe('openai/gpt-oss-20b');
     expect(container.textContent).not.toMatch(/\(current\)/);
   });
 
@@ -133,9 +133,9 @@ describe('SettingsView live model discovery', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('unauthorized', { status: 401 })));
     const initial: Settings = {
       ...emptySettings(),
-      providerId: 'openai',
-      model: 'gpt-4o-mini',
-      keys: { openai: 'bad-key' },
+      providerId: 'groq',
+      model: 'llama-3.1-8b-instant',
+      keys: { groq: 'bad-key' },
     };
     const { container } = await renderSettings(initial);
     const optsBefore = getSelectOptions(container);
@@ -151,9 +151,9 @@ describe('SettingsView live model discovery', () => {
     expect(optsAfter).toEqual(optsBefore);
     expect(container.textContent).toMatch(/Could not fetch|Failed|curated/i);
     const modelSelect = Array.from(container.querySelectorAll('select')).find((s) =>
-      Array.from(s.options).some((o) => o.value === 'gpt-4o-mini'),
+      Array.from(s.options).some((o) => o.value === 'llama-3.1-8b-instant'),
     ) as HTMLSelectElement;
-    expect(modelSelect.value).toBe('gpt-4o-mini');
+    expect(modelSelect.value).toBe('llama-3.1-8b-instant');
   });
 
   it('works for Custom Provider with user-typed endpoint', async () => {
@@ -189,6 +189,68 @@ describe('SettingsView live model discovery', () => {
     ) as HTMLSelectElement;
     expect(modelSelect.value).toBe('custom-live-1');
   });
+
+  it('preserves existing model when switching provider to custom', async () => {
+    const initial: Settings = {
+      ...emptySettings(),
+      providerId: 'groq',
+      model: 'my-custom-model',
+    };
+    const { container } = await renderSettings(initial);
+    const providerSelect = container.querySelector('select') as HTMLSelectElement;
+    await act(async () => {
+      providerSelect.value = 'custom';
+      providerSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const modelInput = container.querySelector('input[placeholder*="gpt-4o-mini"]') as HTMLInputElement;
+    expect(modelInput).toBeTruthy();
+    expect(modelInput.value).toBe('my-custom-model');
+  });
+
+  it('auto-selects first fetched model for Custom Provider if model was empty', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: 'ollama-model-1' }] }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    const initial: Settings = {
+      ...emptySettings(),
+      providerId: 'custom',
+      model: '',
+      customEndpoint: 'http://localhost:11434/v1',
+    };
+    const { container } = await renderSettings(initial);
+    const btn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Fetch available Models'),
+    )!;
+    await act(async () => {
+      (btn as HTMLButtonElement).click();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    const modelSelect = Array.from(container.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'ollama-model-1'),
+    ) as HTMLSelectElement;
+    expect(modelSelect.value).toBe('ollama-model-1');
+  });
+
+  it('does not wipe typed model for Custom Provider when fetch fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('error', { status: 500 })));
+    const initial: Settings = {
+      ...emptySettings(),
+      providerId: 'custom',
+      model: 'my-ollama-model',
+      customEndpoint: 'http://localhost:11434/v1',
+    };
+    const { container } = await renderSettings(initial);
+    const btn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Fetch available Models'),
+    )!;
+    await act(async () => {
+      (btn as HTMLButtonElement).click();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    const modelInput = container.querySelector('input[placeholder*="gpt-4o-mini"]') as HTMLInputElement;
+    expect(modelInput.value).toBe('my-ollama-model');
+  });
 });
 
 describe('SettingsView Live Model Cache persistence (ADR 0002)', () => {
@@ -209,13 +271,13 @@ describe('SettingsView Live Model Cache persistence (ADR 0002)', () => {
   }
 
   it('loads Live Model Cache from storage on mount — no fetch needed', async () => {
-    mockChromeStore({ openai: ['live-persisted-a', 'live-persisted-b'] });
-    const initial: Settings = { ...emptySettings(), providerId: 'openai', model: 'gpt-4o-mini', keys: { openai: 'k' } };
+    mockChromeStore({ groq: ['live-persisted-a', 'live-persisted-b'] });
+    const initial: Settings = { ...emptySettings(), providerId: 'groq', model: 'llama-3.1-8b-instant', keys: { groq: 'k' } };
     const { container } = await renderSettings(initial);
     const opts = getSelectOptions(container);
     expect(opts).toContain('live-persisted-a');
     expect(opts).toContain('live-persisted-b');
-    expect(opts).toContain('gpt-4o-mini');
+    expect(opts).toContain('llama-3.1-8b-instant');
   });
 
   it('keeps cache per Provider — switching providers shows correct union', async () => {
@@ -240,14 +302,14 @@ describe('SettingsView Live Model Cache persistence (ADR 0002)', () => {
   it('persists fetched live models to chrome.storage and clears on failure', async () => {
     const { set } = mockChromeStore({});
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: 'fresh-live' }] }), { status: 200 })));
-    const initial: Settings = { ...emptySettings(), providerId: 'openai', model: 'gpt-4o-mini', keys: { openai: 'k' } };
+    const initial: Settings = { ...emptySettings(), providerId: 'groq', model: 'llama-3.1-8b-instant', keys: { groq: 'k' } };
     const { container } = await renderSettings(initial);
     const btn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Fetch available Models'))!;
     await act(async () => {
       (btn as HTMLButtonElement).click();
       await new Promise((r) => setTimeout(r, 20));
     });
-    expect(set).toHaveBeenCalledWith(expect.objectContaining({ liveModels: expect.objectContaining({ openai: ['fresh-live'] }) }));
+    expect(set).toHaveBeenCalledWith(expect.objectContaining({ liveModels: expect.objectContaining({ groq: ['fresh-live'] }) }));
 
     // Now failure should clear that slot
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 500 })));
@@ -255,9 +317,9 @@ describe('SettingsView Live Model Cache persistence (ADR 0002)', () => {
       (btn as HTMLButtonElement).click();
       await new Promise((r) => setTimeout(r, 20));
     });
-    // Last set should have cleared openai slot
+    // Last set should have cleared groq slot
     const lastCall = set.mock.calls[set.mock.calls.length - 1][0] as { liveModels: Record<string, string[]> };
-    expect(lastCall.liveModels.openai).toBeUndefined();
+    expect(lastCall.liveModels.groq).toBeUndefined();
     expect(container.textContent).toMatch(/Could not fetch models/);
   });
 
@@ -271,8 +333,8 @@ describe('SettingsView Live Model Cache persistence (ADR 0002)', () => {
   it('does not auto-fetch on load', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
-    mockChromeStore({ openai: ['cached-live'] });
-    const initial: Settings = { ...emptySettings(), providerId: 'openai', model: 'cached-live', keys: { openai: 'k' } };
+    mockChromeStore({ groq: ['cached-live'] });
+    const initial: Settings = { ...emptySettings(), providerId: 'groq', model: 'cached-live', keys: { groq: 'k' } };
     await renderSettings(initial);
     expect(fetchSpy).not.toHaveBeenCalled();
   });

@@ -1,6 +1,7 @@
 import type { FieldDescriptor, LlmParsedResponse, PageContext, Profile, Suggestion } from './types';
 import { LlmResponseSchema } from './schema';
 import { isSensitive } from './match';
+import { extractModelIds } from './providers';
 
 /**
  * Provider-agnostic LLM client. Speaks the OpenAI-compatible
@@ -118,12 +119,7 @@ export async function fetchAvailableModels(baseUrl: string, apiKey?: string): Pr
     });
     if (!res.ok) return [];
     const data: unknown = await res.json();
-    const ids = Array.isArray((data as { data?: unknown })?.data)
-      ? ((data as { data: { id?: unknown }[] }).data)
-        .map((m) => String(m?.id ?? ''))
-        .filter(Boolean)
-      : [];
-    return [...new Set(ids)].sort();
+    return extractModelIds(data);
   } catch {
     return [];
   }

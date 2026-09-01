@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PROVIDERS, migrateSettings, providerById, resolveLlmConfig } from './providers';
+import { PROVIDERS, migrateSettings, providerById, resolveLlmConfig, extractModelIds } from './providers';
 import { emptyProfile, emptySettings } from './schema';
 import { suggestWithLlm } from './llm';
 import type { FieldDescriptor } from './types';
@@ -12,7 +12,7 @@ function field(partial: Partial<FieldDescriptor>): FieldDescriptor {
 
 describe('PROVIDERS registry', () => {
   it('contains the providers in order', () => {
-    expect(PROVIDERS.map((p) => p.id)).toEqual(['openai', 'groq', 'nvidia', 'ollama', 'custom']);
+    expect(PROVIDERS.map((p) => p.id)).toEqual(['groq', 'nvidia', 'cerebras', 'ollama', 'custom']);
   });
 
   it('every provider is a single entry with id/label/endpoint/models/keyEnvVar/keyOptional', () => {
@@ -87,6 +87,27 @@ describe('migrateSettings', () => {
 
   it('returns defaults for garbage storage', () => {
     expect(migrateSettings(42, {})).toEqual(emptySettings());
+  });
+});
+
+describe('extractModelIds', () => {
+  it('extracts ids from standard OpenAI format ({ data: [{ id: "m" }] })', () => {
+    expect(extractModelIds({ data: [{ id: 'model-a' }, { id: 'model-b' }] })).toEqual(['model-a', 'model-b']);
+  });
+
+  it('extracts names from Ollama/LMStudio format ({ models: [{ name: "m" }] })', () => {
+    expect(extractModelIds({ models: [{ name: 'ollama-1' }, { name: 'ollama-2' }] })).toEqual(['ollama-1', 'ollama-2']);
+  });
+
+  it('extracts from top-level arrays of objects or strings', () => {
+    expect(extractModelIds([{ id: 'arr-1' }, { id: 'arr-2' }])).toEqual(['arr-1', 'arr-2']);
+    expect(extractModelIds(['str-1', 'str-2'])).toEqual(['str-1', 'str-2']);
+  });
+
+  it('returns empty array for invalid input', () => {
+    expect(extractModelIds(null)).toEqual([]);
+    expect(extractModelIds({})).toEqual([]);
+    expect(extractModelIds(123)).toEqual([]);
   });
 });
 

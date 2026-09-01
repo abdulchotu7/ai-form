@@ -143,8 +143,10 @@ export default function App() {
           } catch (e) {
             setNotice(e instanceof Error ? e.message : 'AI suggestions failed.');
           }
-        } else {
+        } else if (!cfg.baseUrl) {
           setNotice('AI suggestions are off — add an LLM endpoint in Settings to answer text questions.');
+        } else {
+          setNotice('AI suggestions are off — select a Model in Settings to answer text questions.');
         }
       }
 

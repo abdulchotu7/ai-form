@@ -19,14 +19,6 @@ export interface Provider {
 
 export const PROVIDERS: Provider[] = [
   {
-    id: 'openai',
-    label: 'OpenAI',
-    endpoint: 'https://api.openai.com/v1',
-    models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1'],
-    keyEnvVar: 'VITE_OPENAI_API_KEY',
-    keyOptional: false,
-  },
-  {
     id: 'groq',
     label: 'Groq',
     endpoint: 'https://api.groq.com/openai/v1',
@@ -40,6 +32,14 @@ export const PROVIDERS: Provider[] = [
     endpoint: 'https://integrate.api.nvidia.com/v1',
     models: ['openai/gpt-oss-20b', 'meta/llama-3.1-8b-instruct', 'meta/llama-3.3-70b-instruct', 'deepseek-ai/deepseek-v3-675b'],
     keyEnvVar: 'VITE_NVIDIA_API_KEY',
+    keyOptional: false,
+  },
+  {
+    id: 'cerebras',
+    label: 'Cerebras',
+    endpoint: 'https://api.cerebras.ai/v1',
+    models: ['gpt-oss-120b', 'gemma-4-31b'],
+    keyEnvVar: 'VITE_CEREBRAS_API_KEY',
     keyOptional: false,
   },
   {
@@ -139,10 +139,44 @@ export function mergeModels(curated: string[], live: string[]): string[] {
   return [...new Set([...curated, ...live])].sort((a, b) => a.localeCompare(b));
 }
 
+/** Robust model ID extractor supporting standard OpenAI ({data: [{id}]}), Ollama/LMStudio ({models: [{name}]}), and raw arrays. */
+export function extractModelIds(data: unknown): string[] {
+  if (!data || typeof data !== 'object') return [];
+  const list = Array.isArray(data)
+    ? data
+    : Array.isArray((data as { data?: unknown }).data)
+      ? (data as { data: unknown[] }).data
+      : Array.isArray((data as { models?: unknown }).models)
+        ? (data as { models: unknown[] }).models
+        : [];
+  const ids = list
+    .map((item) => {
+      if (typeof item === 'string') return item.trim();
+      if (item && typeof item === 'object') {
+        const obj = item as Record<string, unknown>;
+        return String(obj.id ?? obj.name ?? '').trim();
+      }
+      return '';
+    })
+    .filter(Boolean);
+  return [...new Set(ids)].sort((a, b) => a.localeCompare(b));
+}
+
 /** The actual LLM config a fill uses: provider endpoint, per-provider key, single model. */
 export function resolveLlmConfig(s: Settings): LlmConfig {
   if (s.providerId === 'custom') {
-    return { baseUrl: s.customEndpoint, apiKey: s.customApiKey, model: s.model, providerId: "custom" };
+    return {
+      baseUrl: s.customEndpoint.trim(),
+      apiKey: s.customApiKey.trim(),
+      model: s.model.trim(),
+      providerId: 'custom',
+    };
   }
-  return { baseUrl: providerById(s.providerId).endpoint, apiKey: s.keys[s.providerId] ?? '', model: s.model, providerId: s.providerId };
+  const p = providerById(s.providerId);
+  return {
+    baseUrl: p.endpoint.trim(),
+    apiKey: (s.keys[s.providerId] ?? '').trim(),
+    model: s.model.trim(),
+    providerId: s.providerId,
+  };
 }
