@@ -29,6 +29,7 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - name: Fetch the exact build
         uses: actions/download-artifact@v4
