@@ -120,3 +120,5 @@ Webpage
 → Fill fields
 → User submits manually
 ```
+
+*(CI/CD: GitHub Actions build, test, and manual approval gate)*
