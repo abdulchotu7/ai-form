@@ -18,3 +18,29 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+      - name: Save built extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-${{ github.sha }}
+          path: dist/
+
+  deliver:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch the exact build
+        uses: actions/download-artifact@v4
+        with:
+          name: extension-${{ github.sha }}
+          path: dist/
+
+      - name: Pack one shippable zip
+        run: cd dist && zip -r ../extension-${{ github.sha }}.zip .
+
+      - name: Register the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-package-${{ github.sha }}
+          path: extension-${{ github.sha }}.zip
